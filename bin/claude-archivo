@@ -1,0 +1,28 @@
+#!/bin/bash
+# Acción rápida de Finder: "Preguntarle a Claude". Recibe uno o más archivos,
+# pregunta qué querés saber (por defecto: resumen) y abre la respuesta en
+# TextEdit. Claude sólo puede LEER (Read), nada más.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+[ $# -eq 0 ] && exit 0
+
+pedido=${CLAUDE_PEDIDO:-$(osascript -e 'try
+  text returned of (display dialog "¿Qué querés saber de este archivo?" default answer "Resumilo en castellano: qué es, lo importante y si hay algo raro o pendiente." with title "Preguntarle a Claude" buttons {"Cancelar", "Preguntar"} default button "Preguntar")
+on error
+  return ""
+end try')}
+[ -z "$pedido" ] && exit 0
+
+nombres=""; dirs=()
+for f in "$@"; do nombres+="- $f"$'\n'; dirs+=(--add-dir "$(dirname "$f")"); done
+osascript -e "display notification \"Leyendo $(basename "$1")…\" with title \"Claude\"" >/dev/null 2>&1
+
+salida="${TMPDIR:-/tmp}/claude-$(basename "$1" | tr ' /' '__')-$(date +%H%M%S).md"
+{
+  echo "# $(basename "$1")"; echo; echo "> $pedido"; echo
+  cd "$(dirname "$1")" && claude -p "Archivos:
+$nombres
+$pedido" "${dirs[@]}" --permission-mode dontAsk --allowedTools "Read" "Grep" "Glob" </dev/null 2>&1
+} > "$salida"
+
+osascript -e 'display notification "Listo" with title "Claude" sound name "Glass"' >/dev/null 2>&1
+[ -n "$CLAUDE_NO_ABRIR" ] && cat "$salida" || open -a TextEdit "$salida"

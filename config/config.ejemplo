@@ -1,0 +1,13 @@
+# Configuración de Claude Code Gadgets. Se copia a ~/.config/claude-gadgets/config
+# (formato bash). Todo es opcional.
+
+# Servicio propio a vigilar desde la barra de menú (responde 200 = OK).
+# HUB_URL="https://tu-servicio.ejemplo.com/"
+# HUB_NOMBRE="Hub"
+
+# Links extra en el menú ("Texto=URL").
+# LINKS=("Railway=https://railway.com/dashboard" "Supabase=https://supabase.com/dashboard")
+
+# Siri / Atajos: carpeta donde trabaja Claude y modelo (sonnet = rápido).
+# CLAUDE_SIRI_DIR="$HOME/proyectos"
+# CLAUDE_SIRI_MODELO="sonnet"

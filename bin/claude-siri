@@ -1,0 +1,22 @@
+#!/bin/bash
+# Pregunta rápida a Claude pensada para Siri / Atajos (vía SSH): contesta corto,
+# sin markdown, en castellano, y sólo con herramientas de lectura y web.
+#   claude-siri "¿qué cambió hoy en mi-proyecto?"
+# Carpeta de trabajo: $CLAUDE_SIRI_DIR (por defecto ~/proyectos o ~).
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+[ -f ~/.config/claude-gadgets/config ] && . ~/.config/claude-gadgets/config
+# Por SSH el llavero de macOS está bloqueado y Claude Code no encuentra el login:
+# se usa el token largo de `claude setup-token`, guardado en este archivo.
+tok=~/.config/claude-gadgets/token
+[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(<"$tok")"
+pregunta="$*"
+[ -z "$pregunta" ] && pregunta=$(cat)
+[ -z "$pregunta" ] && { echo "No me llegó ninguna pregunta."; exit 1; }
+dir="${CLAUDE_SIRI_DIR:-$HOME/proyectos}"; [ -d "$dir" ] || dir="$HOME"
+cd "$dir" || exit 1
+claude -p "$pregunta" \
+  --model "${CLAUDE_SIRI_MODELO:-sonnet}" \
+  --permission-mode dontAsk \
+  --allowedTools "Read" "Grep" "Glob" "WebSearch" "WebFetch" \
+  --append-system-prompt "Tu respuesta se va a leer en voz alta en un iPhone. Respondé en castellano rioplatense, en 1 a 3 oraciones, sin markdown, sin listas, sin rutas de archivos ni código." \
+  </dev/null 2>&1

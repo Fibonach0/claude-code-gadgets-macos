@@ -1,0 +1,3 @@
+#!/bin/bash
+# Borra el estado de sesiones de Claude (lo que muestra la barra de menú).
+rm -f ~/.claude/estado/sesion-*.json

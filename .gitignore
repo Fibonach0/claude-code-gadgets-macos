@@ -1,0 +1,6 @@
+.DS_Store
+*.bak-*
+
+# Nunca subir tokens
+token
+*.token
