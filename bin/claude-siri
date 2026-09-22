@@ -14,9 +14,35 @@ pregunta="$*"
 [ -z "$pregunta" ] && { echo "No me llegó ninguna pregunta."; exit 1; }
 dir="${CLAUDE_SIRI_DIR:-$HOME/proyectos}"; [ -d "$dir" ] || dir="$HOME"
 cd "$dir" || exit 1
+
+# Carpetas que Claude puede leer: la principal + CLAUDE_SIRI_EXTRA (array en la config).
+carpetas=("$dir"); for d in "${CLAUDE_SIRI_EXTRA[@]}"; do [ -d "$d" ] && carpetas+=("$d"); done
+extra=(); lista=""; reglas=()
+repo() {  # permisos de git sólo-lectura, con la ruta del repo fija
+  local r="$1"; lista+="- $r (repo git)"$'\n'
+  for sc in log status diff show branch "remote -v"; do reglas+=("Bash(git -C $r $sc *)" "Bash(git -C $r $sc)"); done
+}
+for c in "${carpetas[@]}"; do
+  [ "$c" != "$dir" ] && extra+=(--add-dir "$c")
+  if git -C "$c" rev-parse --git-dir >/dev/null 2>&1; then repo "$c"
+  else for sub in "$c"/*/; do [ -d "$sub" ] || continue; sub=${sub%/}
+         if [ -e "$sub/.git" ]; then repo "$sub"; else lista+="- $sub"$'\n'; fi; done; fi
+done
+
+sistema="Sos el asistente de voz del usuario. Tenés acceso de LECTURA a sus proyectos:
+$lista
+Reglas:
+- Si la pregunta es sobre un proyecto, código, configuración, documentación o archivos, BUSCÁ primero (Glob, Grep, Read) en esas carpetas. Nunca digas que no tenés registros o acceso sin haber buscado.
+- Si pregunta qué cambió, qué se hizo o qué se mergeó, usá git SIEMPRE con -C y la ruta del repo, sin cd (por ejemplo: git -C <ruta del repo> log --since=yesterday --oneline). Para PRs: gh pr list --repo <dueño/nombre> --state merged (el dueño/nombre sale de git -C <ruta> remote -v).
+- Para datos de afuera (clima, noticias, precios, rutas) usá la web.
+- No podés modificar nada; si te piden algo que no sea leer o buscar, decilo.
+- Tu respuesta se lee en voz alta en un iPhone: castellano rioplatense, 1 a 3 oraciones, sin markdown, sin listas, sin rutas de archivos ni código, sin hashes de commits."
+
 claude -p "$pregunta" --no-session-persistence \
   --model "${CLAUDE_SIRI_MODELO:-sonnet}" \
   --permission-mode dontAsk \
+  "${extra[@]}" \
   --allowedTools "Read" "Grep" "Glob" "WebSearch" "WebFetch" \
-  --append-system-prompt "Tu respuesta se va a leer en voz alta en un iPhone. Respondé en castellano rioplatense, en 1 a 3 oraciones, sin markdown, sin listas, sin rutas de archivos ni código." \
+    "${reglas[@]}" "Bash(gh pr list *)" "Bash(gh pr view *)" \
+  --append-system-prompt "$sistema" \
   </dev/null 2>&1

@@ -11,3 +11,5 @@
 # Siri / Atajos: carpeta donde trabaja Claude y modelo (sonnet = rápido).
 # CLAUDE_SIRI_DIR="$HOME/proyectos"
 # CLAUDE_SIRI_MODELO="sonnet"
+# Carpetas extra que también puede leer (fuera de CLAUDE_SIRI_DIR):
+# CLAUDE_SIRI_EXTRA=("$HOME/otro-proyecto")

@@ -71,7 +71,11 @@ Para no depender de que Siri entienda el nombre:
 - **Botón de Acción** (iPhone 15 Pro o posterior): *Configuración → Botón de acción → Atajo* → elegí el tuyo. Mantenés apretado, dictás y te lee la respuesta.
 - **Tocar atrás** (cualquier iPhone reciente): *Configuración → Accesibilidad → Tocar → Tocar atrás → Doble toque* → el Atajo.
 
-`claude-siri` usa Sonnet (rápido) y sólo herramientas de lectura y web: no puede modificar archivos ni correr comandos. Tarda unos 5 a 15 segundos. Para cambiar la carpeta o el modelo, editá `CLAUDE_SIRI_DIR` y `CLAUDE_SIRI_MODELO` en `~/.config/claude-gadgets/config`.
+`claude-siri` usa Sonnet (rápido) y sólo puede **leer**: archivos de tus proyectos, la web, y git en modo lectura (`git -C <repo> log/status/diff/show/branch`, `gh pr list/view`), con la ruta de cada repo fija en el permiso. No puede modificar archivos ni correr otros comandos. Tarda unos 5 a 20 segundos.
+
+En la config: `CLAUDE_SIRI_DIR` (carpeta principal, por defecto `~/proyectos`), `CLAUDE_SIRI_EXTRA` (carpetas extra) y `CLAUDE_SIRI_MODELO`.
+
+Ejemplos: "¿qué se mergeó ayer en mi-proyecto?", "¿a qué hora corre el job de backups?", "¿qué tiempo hace mañana?".
 
 ## Seguridad
 
