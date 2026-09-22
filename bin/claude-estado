@@ -1,0 +1,71 @@
+#!/bin/bash
+# Estado de todo en una pantalla: pensado para un Atajo del iPhone, pero
+# también sirve en la terminal. Dice si tus servicios responden, qué se mergeó
+# hoy, qué PRs están abiertos y si el guardián de deploys está esperando algo.
+#
+# Uso:  claude-estado            texto corto, listo para leer
+#       claude-estado --largo    suma los últimos commits de cada repo
+#
+# Config en ~/.config/claude-gadgets/config (comparte GUARDIA con claude-guardia):
+#   GUARDIA=("hub|$HOME/proyectos/hub|https://hub.ejemplo.com/|bundle" …)
+#   ESTADO_REPOS=("$HOME/proyectos/hub")   # opcional: repos extra a mirar
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+largo=0; [ "${1:-}" = --largo ] && largo=1
+est=~/.claude/estado
+
+repo_de() { git -C "$1" remote get-url origin 2>/dev/null | sed -E 's#.*github.com[:/]##; s/\.git$//'; }
+
+# ── Servicios ────────────────────────────────────────────────────────────────
+echo "SERVICIOS"
+declare -a repos=()
+for fila in "${GUARDIA[@]}"; do
+  IFS='|' read -r nombre repo url modo <<<"$fila"
+  repos+=("$repo|$nombre")
+  ini=$(date +%s%N 2>/dev/null)
+  cod=$(curl -s -m 8 -o /dev/null -w '%{http_code}' -H 'Accept: text/plain' "$url")
+  ms=$(( ($(date +%s%N 2>/dev/null) - ini) / 1000000 ))
+  if [ "$cod" = 200 ]; then echo "  OK  $nombre (${ms}ms)"; else echo "  MAL $nombre responde $cod"; fi
+done
+for r in "${ESTADO_REPOS[@]}"; do repos+=("$r|$(basename "$r")"); done
+[ ${#repos[@]} -eq 0 ] && echo "  (nada configurado: definí GUARDIA o ESTADO_REPOS en $conf)"
+
+# ── Deploys que el guardián está esperando ───────────────────────────────────
+if [ -f "$est/guardia.json" ]; then
+  pend=$(jq -r 'to_entries[] | select(.value.desde != null and .value.desde != "") | "  ESPERANDO \(.key): \(.value.titulo // "")"' "$est/guardia.json")
+  [ -n "$pend" ] && { echo; echo "DEPLOYS EN CURSO"; echo "$pend"; }
+  ult=$(tail -3 "$est/guardia.log" 2>/dev/null)
+  [ -n "$ult" ] && { echo; echo "ÚLTIMOS AVISOS"; sed 's/^/  /' <<<"$ult"; }
+fi
+
+# ── Repos: qué se mergeó hoy y qué quedó abierto ─────────────────────────────
+echo; echo "REPOS"
+hoy=$(date +%Y-%m-%d)
+for fila in "${repos[@]}"; do
+  IFS='|' read -r repo nombre <<<"$fila"
+  [ -d "$repo/.git" ] || continue
+  git -C "$repo" fetch -q origin 2>/dev/null
+  rama=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||'); rama=${rama:-main}
+  n=$(git -C "$repo" log --since="$hoy 00:00" --oneline "origin/$rama" 2>/dev/null | wc -l | tr -d ' ')
+  sucio=$(git -C "$repo" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  linea="  $nombre: $n commits hoy"
+  [ "$sucio" != 0 ] && linea="$linea, $sucio archivos sin commitear"
+  if command -v gh >/dev/null; then
+    slug=$(repo_de "$repo")
+    abiertos=$(gh pr list -R "$slug" --state open --json number --jq length 2>/dev/null)
+    [ -n "$abiertos" ] && [ "$abiertos" != 0 ] && linea="$linea, $abiertos PRs abiertos"
+  fi
+  echo "$linea"
+  if [ $largo = 1 ]; then
+    git -C "$repo" log --since="$hoy 00:00" --format='    · %s' "origin/$rama" 2>/dev/null | head -5
+  fi
+done
+
+# ── Uso de la cuenta ─────────────────────────────────────────────────────────
+if [ -f "$est/uso.json" ]; then
+  p5=$(jq -r '.rate_limits.five_hour.used_percentage // empty' "$est/uso.json")
+  p7=$(jq -r '.rate_limits.seven_day.used_percentage // empty' "$est/uso.json")
+  [ -n "$p5$p7" ] && { echo; printf 'CUPO DE CLAUDE\n  sesión %.0f%%, semana %.0f%%\n' "${p5:-0}" "${p7:-0}"; }
+fi

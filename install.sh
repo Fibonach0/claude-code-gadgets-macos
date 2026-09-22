@@ -53,9 +53,12 @@ respaldar "$AQUI/claude/statusline.sh" "$CLAUDE_DIR/statusline.sh"
 install -m 755 "$AQUI/claude/statusline.sh" "$CLAUDE_DIR/statusline.sh"
 respaldar "$AQUI/claude/hooks/avisar.sh" "$CLAUDE_DIR/hooks/avisar.sh"
 install -m 755 "$AQUI/claude/hooks/avisar.sh" "$CLAUDE_DIR/hooks/avisar.sh"
+install -m 755 "$AQUI/claude/hooks/frenar.sh" "$CLAUDE_DIR/hooks/frenar.sh"
 for f in "$AQUI"/bin/*; do install -m 755 "$f" "$GADGETS/bin/"; done
 mkdir -p "$HOME/.local/bin"
-ln -sf "$GADGETS/bin/claude-siri" "$HOME/.local/bin/claude-siri"
+for c in claude-siri claude-estado claude-guardia claude-buzon; do
+  ln -sf "$GADGETS/bin/$c" "$HOME/.local/bin/$c"
+done
 ok "statusline, hooks y comandos en $GADGETS/bin (claude-siri en ~/.local/bin)"
 
 mkdir -p "$CONF_DIR"
@@ -72,6 +75,11 @@ tmp=$(mktemp)
 jq --argjson eventos "$(cat "$AQUI/config/hooks.json")" --argjson permisos "$permisos" '
   .statusLine = {type:"command", command:"~/.claude/statusline.sh", padding:0}
   | .hooks = (.hooks // {})
+  | .hooks.PreToolUse = (
+      [ (.hooks.PreToolUse // [])[]
+        | .hooks = [ .hooks[] | select((.command // "") | contains("hooks/frenar.sh") | not) ]
+        | select(.hooks | length > 0) ]
+      + [ {matcher:"Bash", hooks:[{type:"command", command:"~/.claude/hooks/frenar.sh", timeout:10}]} ])
   | reduce ($eventos | to_entries[]) as $e (.;
       .hooks[$e.key] = (
         [ (.hooks[$e.key] // [])[]
@@ -82,7 +90,7 @@ jq --argjson eventos "$(cat "$AQUI/config/hooks.json")" --argjson permisos "$per
   | if ($permisos | length) > 0
     then .permissions.allow = ((.permissions.allow // []) + $permisos | unique) else . end
 ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-ok "statusLine y hooks (UserPromptSubmit, Notification, Stop, SessionEnd) en settings.json"
+ok "statusLine y hooks (avisos + freno de mano en PreToolUse) en settings.json"
 [ $CON_PERMISOS = 1 ] && ok "Permisos de sólo lectura agregados ($(jq length "$AQUI/config/permisos-lectura.json"))"
 ok "Respaldo: $SETTINGS.bak-*"
 
@@ -127,5 +135,9 @@ cat <<EOF
     con cuenta de claude.ai; con API key no hay límites que mostrar).
   • Siri desde el iPhone: seguí docs/SIRI.md (Remote Login + Tailscale + Atajo).
   • Opcional: editá $CONF_DIR/config para vigilar tu servicio.
+  • Guardián de deploys y buzón (opcionales, se prenden a mano):
+      claude-guardia --instalar     (antes: definí GUARDIA en la config)
+      claude-buzon --instalar       (crea la carpeta en iCloud Drive)
+  • Estado de todo en una pantalla: claude-estado
   • Para desinstalar: ./uninstall.sh
 EOF

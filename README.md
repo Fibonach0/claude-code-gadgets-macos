@@ -10,6 +10,10 @@ Se instalan con un comando y se desinstalan con otro.
 | **Avisos** (hooks) | Notificación y sonido cuando Claude termina o te necesita, sólo si no estás mirando la Terminal. |
 | **Finder** | Clic derecho sobre un archivo → *Acciones rápidas* → **Preguntarle a Claude**. Le preguntás algo y la respuesta se abre en TextEdit. Claude sólo puede leer. |
 | **Siri / Atajos** | `claude-siri "pregunta"`: una respuesta corta para leer en voz alta. Con un Atajo del iPhone y SSH queda en "Oye Siri, consulta Claude" o en el botón de Acción. Ver [docs/SIRI.md](docs/SIRI.md). |
+| **Guardián de deploys** | `claude-guardia`: cuando mergeás a main, espera a que el cambio llegue de verdad a producción. Si el sitio sigue sirviendo el bundle viejo (build roto que no bloquea el merge) o el servicio no vuelve, te avisa. |
+| **Buzón** | `claude-buzon`: dejás una foto, PDF o Excel en una carpeta de iCloud Drive (también desde el iPhone) y aparece al lado una ficha en `.md` con los datos. |
+| **Estado** | `claude-estado`: en una pantalla, servicios arriba o abajo, qué se mergeó hoy, PRs abiertos, deploys en curso y tu cupo de Claude. Va bien como Atajo del iPhone. |
+| **Freno de mano** | Hook `PreToolUse` que frena lo irreversible antes de que pase: push forzado, `rm -rf` con comodín, DROP/TRUNCATE, variables de producción, borrar repos o credenciales. |
 | **Permisos** (opcional) | Deja correr sin preguntar comandos de sólo lectura (`git status/log/diff`, `ls`, `gh pr view`, `railway logs`…). |
 
 ## Instalar
@@ -61,7 +65,28 @@ HUB_NOMBRE="Hub"
 LINKS=("Railway=https://railway.com/dashboard")
 CLAUDE_SIRI_DIR="$HOME/proyectos"            # dónde trabaja claude-siri
 CLAUDE_SIRI_MODELO="sonnet"
+CLAUDE_SIRI_EXTRA=("$HOME/otra-carpeta")     # carpetas extra que puede leer
+
+# Guardián de deploys: nombre|repo|destino|modo   (modo: bundle | salud)
+GUARDIA=("hub|$HOME/proyectos/hub|https://hub.ejemplo.com/|bundle"
+         "bot|$HOME/proyectos/bot|https://bot.ejemplo.com/|salud")
+GUARDIA_ESPERA=15                            # minutos antes de dar el deploy por perdido
+
+BUZON="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude"
+NTFY_TOPIC=""                                # opcional: avisos al celular por ntfy.sh
+FRENO=1                                      # 0 apaga el freno de mano
 ```
+
+Los dos que corren solos se prenden a mano, una vez:
+
+```bash
+claude-guardia --instalar    # revisa cada 2 minutos
+claude-buzon --instalar      # crea la carpeta y la escucha
+```
+
+> `NTFY_TOPIC` manda los avisos a ntfy.sh, un servicio público: cualquiera que
+> adivine el nombre del tema los ve. Usá un nombre largo y al azar, y no pongas
+> ahí nada sensible. Vacío = sólo avisos en la Mac.
 
 ## Extras que vienen con Claude Code
 
@@ -76,10 +101,14 @@ CLAUDE_SIRI_MODELO="sonnet"
 install.sh / uninstall.sh
 claude/statusline.sh          statusline + guarda el uso
 claude/hooks/avisar.sh        avisos + estado de sesiones
+claude/hooks/frenar.sh        freno de mano (PreToolUse)
 swiftbar/claude.1m.sh         plugin de la barra (cada 1 min)
 bin/claude-siri               pregunta corta para Siri/SSH
 bin/claude-archivo            lo que corre la acción de Finder
 bin/claude-limpiar-estado     borra sesiones colgadas del menú
+bin/claude-guardia            guardián de deploys (launchd, cada 2 min)
+bin/claude-buzon              carpeta mágica en iCloud Drive (launchd)
+bin/claude-estado             estado de todo en una pantalla
 finder/Preguntarle a Claude.workflow
 config/                       ejemplo de config, hooks, permisos
 docs/SIRI.md                  paso a paso del Atajo del iPhone

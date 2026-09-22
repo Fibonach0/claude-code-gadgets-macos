@@ -13,3 +13,20 @@
 # CLAUDE_SIRI_MODELO="sonnet"
 # Carpetas extra que también puede leer (fuera de CLAUDE_SIRI_DIR):
 # CLAUDE_SIRI_EXTRA=("$HOME/otro-proyecto")
+
+# ── Guardián de deploys ──────────────────────────────────────────────────────
+# nombre|repo|destino|modo   (modo: bundle = mira /static/main.<hash>.js
+#                                    salud  = espera un 200)
+# GUARDIA=("hub|$HOME/proyectos/hub|https://hub.ejemplo.com/|bundle"
+#          "bot|$HOME/proyectos/bot|https://bot.ejemplo.com/|salud")
+# GUARDIA_ESPERA=15
+
+# ── Buzón (carpeta mágica) ───────────────────────────────────────────────────
+# BUZON="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude"
+# BUZON_MODELO="sonnet"
+
+# ── Avisos al celular (opcional, servicio público ntfy.sh) ───────────────────
+# NTFY_TOPIC="algo-largo-y-al-azar"
+
+# ── Freno de mano ────────────────────────────────────────────────────────────
+# FRENO=0    # lo apaga

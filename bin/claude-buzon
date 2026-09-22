@@ -1,0 +1,106 @@
+#!/bin/bash
+# Carpeta mágica: dejás un archivo (foto, PDF, Excel, texto) en una carpeta de
+# iCloud Drive y Claude lo lee, escribe una ficha en .md al lado y te avisa.
+# Como la carpeta está en iCloud, podés tirar cosas desde el iPhone.
+#
+# Uso:
+#   claude-buzon               procesa lo que haya (lo que corre launchd)
+#   claude-buzon --instalar    lo deja escuchando la carpeta (y cada 5 min)
+#   claude-buzon --desinstalar
+#
+# Config en ~/.config/claude-gadgets/config:
+#   BUZON="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude"
+#   BUZON_MODELO="sonnet"
+# Si dejás un archivo `_instrucciones.md` dentro de la carpeta, su contenido se
+# le suma al pedido: sirve para decirle qué datos te importan de cada papel.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+tok=~/.config/claude-gadgets/token
+[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$tok")"
+buzon="${BUZON:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude}"
+listos="$buzon/Procesados"
+plist=~/Library/LaunchAgents/com.claude-gadgets.buzon.plist
+log=~/.claude/estado/buzon.log
+
+avisar() { local t=${1//\"/\'} m=${2//\"/\'}
+  osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Glass}\"" >/dev/null 2>&1 & disown
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: $1" -d "$2" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
+  printf '%s | %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"; }
+
+case "${1:-}" in
+  --instalar)
+    mkdir -p "$buzon" "$listos" ~/Library/LaunchAgents
+    [ -f "$buzon/_instrucciones.md" ] || cat > "$buzon/_instrucciones.md" <<'TXT'
+# Qué hacer con lo que dejo acá
+
+Leé el archivo y escribí una ficha corta en castellano: qué es, de quién,
+fecha, importes, números de documento y cualquier dato que haya que cargar
+después. Si falta algo o algo no se entiende, decilo al final en "Dudas".
+TXT
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.buzon</string>
+  <key>ProgramArguments</key><array><string>$HOME/.claude/gadgets/bin/claude-buzon</string></array>
+  <key>WatchPaths</key><array><string>$buzon</string></array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/buzon.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+      && echo "✓ Buzón escuchando: $buzon"; exit 0 ;;
+  --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Buzón apagado"; exit 0 ;;
+esac
+
+[ -d "$buzon" ] || { echo "No existe la carpeta: $buzon (corré claude-buzon --instalar)"; exit 1; }
+mkdir -p "$listos"
+extras=""; [ -f "$buzon/_instrucciones.md" ] && extras=$(cat "$buzon/_instrucciones.md")
+
+shopt -s nullglob
+for f in "$buzon"/*; do
+  [ -f "$f" ] || continue
+  n=$(basename "$f")
+  case "$n" in .*|_instrucciones.md|*.md) continue ;; esac
+  # Archivo todavía en la nube: pedir la bajada y dejarlo para la próxima vuelta.
+  case "$n" in .*.icloud) brctl download "$f" 2>/dev/null; continue ;; esac
+  # Que no esté copiándose todavía: el tamaño tiene que quedar quieto.
+  t1=$(stat -f %z "$f"); sleep 2; [ "$t1" != "$(stat -f %z "$f")" ] && continue
+  [ "$t1" -eq 0 ] && continue
+
+  ext=$(echo "${n##*.}" | tr 'A-Z' 'a-z')
+  tmp=""; leer_esto="el archivo $n de esta carpeta"
+  case "$ext" in
+    pdf|png|jpg|jpeg|heic|webp|gif|txt|md|csv|tsv|json|log|xml|html) : ;;
+    xlsx|xlsm)   # Read no abre Excel: lo paso a CSV, una hoja por archivo
+      tmp=$(mktemp -d)
+      if ! python3 "$HOME/.claude/gadgets/bin/xlsx2csv.py" "$f" "$tmp" 2>/dev/null; then
+        avisar "Buzon: no pude convertir $n" "Hace falta python3 con openpyxl" Basso; rm -rf "$tmp"; continue; fi
+      leer_esto="los CSV que están en $tmp (son las hojas de $n)" ;;
+    *) avisar "Buzon: $n" "No puedo leer archivos .$ext; lo dejo donde está" Basso; continue ;;
+  esac
+
+  ficha="$listos/${n%.*}.md"
+  [ -f "$ficha" ] && ficha="$listos/${n%.*}-$(date +%H%M%S).md"
+  avisar "Buzón" "Leyendo ${n}"
+  {
+    echo "# $n"; echo; echo "_Procesado $(date '+%d/%m/%Y %H:%M')_"; echo
+    claude -p "Leé $leer_esto y escribí la ficha.
+
+$extras
+
+Formato: markdown corto, con los datos en viñetas. Sin preámbulos." \
+      --no-session-persistence --model "${BUZON_MODELO:-sonnet}" \
+      --permission-mode dontAsk --allowedTools "Read" "Grep" "Glob" \
+      --add-dir "$buzon" ${tmp:+--add-dir "$tmp"} </dev/null 2>&1
+  } > "$ficha"
+  [ -n "$tmp" ] && rm -rf "$tmp"
+  if [ -s "$ficha" ] && ! grep -qiE "no puedo|no pude|bloque|permis" "$ficha"; then
+    mv "$f" "$listos/$n"
+    avisar "✅ Buzón: $n" "$(sed -n '5,7p' "$ficha" | tr '\n' ' ' | cut -c1-120)" Hero
+  else
+    avisar "❌ Buzón: no pude con $n" "Quedó en la carpeta para reintentar" Basso
+  fi
+done

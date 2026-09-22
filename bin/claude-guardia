@@ -1,0 +1,126 @@
+#!/bin/bash
+# Guardián de deploys: mira si lo que mergeaste llegó de verdad a producción.
+#
+# Cada repo que le declarás tiene un destino. Cuando aparece un commit nuevo en
+# la rama principal, el guardián espera a que el destino cambie:
+#   - modo "bundle": el sitio sirve otro /static/js/main.<hash>.js (Cloudflare
+#     Pages, Vercel, Netlify). Si el build falla, el sitio sigue sirviendo el
+#     bundle viejo SIN avisar: eso es justo lo que esto detecta.
+#   - modo "salud": el servicio vuelve a responder 200 (Railway, Fly, Render).
+# Si además hay un workflow de GitHub Actions para ese commit y falla, avisa.
+#
+# Uso:
+#   claude-guardia              una pasada (lo que corre el agente de launchd)
+#   claude-guardia --estado     qué está esperando ahora mismo
+#   claude-guardia --instalar   lo deja corriendo cada 2 minutos
+#   claude-guardia --desinstalar
+#
+# Se configura en ~/.config/claude-gadgets/config:
+#   GUARDIA=("hub|$HOME/proyectos/hub|https://hub.ejemplo.com/|bundle"
+#            "bot|$HOME/proyectos/bot|https://bot.ejemplo.com/|salud")
+#   GUARDIA_ESPERA=15     # minutos antes de dar el deploy por perdido
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+est=~/.claude/estado; mkdir -p "$est"
+estado="$est/guardia.json"; log="$est/guardia.log"
+plist=~/Library/LaunchAgents/com.claude-gadgets.guardia.plist
+espera=$((${GUARDIA_ESPERA:-15} * 60))
+[ -f "$estado" ] || echo '{}' > "$estado"
+
+avisar() {  # titulo, texto, sonido
+  local t=${1//\"/\'} m=${2//\"/\'}
+  osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Glass}\"" >/dev/null 2>&1 &
+  disown
+  # Aviso al celular, sólo si configuraste un tema de ntfy.sh (ver README).
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: $1" -d "$2" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
+  printf '%s | %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"
+}
+
+guardar() { local n=$1 k=$2 v=$3; local t; t=$(mktemp)
+  jq --arg n "$n" --arg k "$k" --arg v "$v" '.[$n] = ((.[$n] // {}) + {($k): $v})' "$estado" > "$t" && mv "$t" "$estado"; }
+leer() { jq -r --arg n "$1" --arg k "$2" '.[$n][$k] // empty' "$estado"; }
+olvidar() { local t; t=$(mktemp); jq --arg n "$1" 'del(.[$n])' "$estado" > "$t" && mv "$t" "$estado"; }
+
+huella() {  # qué está sirviendo el destino ahora
+  local url=$1 modo=$2
+  case "$modo" in
+    bundle) curl -s -m 15 -H 'Cache-Control: no-store' "$url" \
+              | grep -oE '/static/[a-z]+/[A-Za-z0-9._-]+\.(js|css)' | sort -u | shasum | cut -c1-12 ;;
+    salud)  curl -s -m 15 -o /dev/null -w '%{http_code}' "$url" ;;
+    *) echo "-" ;;
+  esac
+}
+
+case "${1:-}" in
+  --estado)
+    jq -r 'to_entries[] | "\(.key): sha \(.value.sha[0:7] // "?") · \(if .value.desde then "esperando desde " + (.value.desde|tonumber|strflocaltime("%H:%M")) else "al día" end)"' "$estado"
+    [ -f "$log" ] && { echo "--- últimos avisos:"; tail -5 "$log"; }; exit 0 ;;
+  --instalar)
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.guardia</string>
+  <key>ProgramArguments</key><array><string>$HOME/.claude/gadgets/bin/claude-guardia</string></array>
+  <key>StartInterval</key><integer>120</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/guardia.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null
+    launchctl load "$plist" && echo "✓ Guardián activo: revisa cada 2 minutos. Ver: claude-guardia --estado"; exit 0 ;;
+  --desinstalar)
+    launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Guardián apagado"; exit 0 ;;
+esac
+
+[ ${#GUARDIA[@]} -eq 0 ] && { echo "Nada que vigilar: definí GUARDIA en $conf"; exit 0; }
+
+for fila in "${GUARDIA[@]}"; do
+  IFS='|' read -r nombre repo url modo <<<"$fila"
+  [ -d "$repo/.git" ] || { echo "$nombre: $repo no es un repo"; continue; }
+  rama=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||'); rama=${rama:-main}
+  git -C "$repo" fetch -q origin "$rama" 2>/dev/null
+  sha=$(git -C "$repo" rev-parse "origin/$rama" 2>/dev/null) || continue
+  ahora=$(date +%s)
+
+  visto=$(leer "$nombre" sha)
+  if [ "$sha" != "$visto" ]; then
+    guardar "$nombre" sha "$sha"
+    guardar "$nombre" antes "$(huella "$url" "$modo")"
+    guardar "$nombre" titulo "$(git -C "$repo" log -1 --format=%s "$sha" | cut -c1-70)"
+    # La primera vez que ve un repo sólo saca la foto: no hay nada que esperar.
+    [ -n "$visto" ] && guardar "$nombre" desde "$ahora"
+    continue
+  fi
+
+  desde=$(leer "$nombre" desde); [ -z "$desde" ] && continue   # ya avisado
+  titulo=$(leer "$nombre" titulo); antes=$(leer "$nombre" antes)
+  ahora_h=$(huella "$url" "$modo"); transcurrido=$(( (ahora - desde) / 60 ))
+
+  # ¿Falló el workflow de GitHub para este commit?
+  if command -v gh >/dev/null; then
+    mal=$(gh run list -R "$(git -C "$repo" remote get-url origin | sed -E 's#.*github.com[:/]##; s/\.git$//')" \
+            --commit "$sha" --limit 3 --json conclusion --jq '[.[] | select(.conclusion=="failure")] | length' 2>/dev/null)
+    if [ "${mal:-0}" -gt 0 ]; then
+      avisar "❌ $nombre: falló el build" "$titulo" Basso; olvidar "$nombre"; guardar "$nombre" sha "$sha"; continue
+    fi
+  fi
+
+  if [ "$modo" = salud ]; then
+    if [ "$ahora_h" = 200 ] && [ $transcurrido -ge 1 ]; then
+      avisar "✅ $nombre: en línea" "$titulo" Hero; guardar "$nombre" desde ""
+    elif [ "$ahora_h" != 200 ] && [ $((ahora - desde)) -ge $espera ]; then
+      avisar "❌ $nombre: no responde ($ahora_h)" "Desde el deploy de: $titulo" Basso; guardar "$nombre" desde ""
+    fi
+  else
+    if [ -n "$ahora_h" ] && [ "$ahora_h" != "$antes" ]; then
+      avisar "✅ $nombre: deploy en producción" "$titulo (${transcurrido}m)" Hero; guardar "$nombre" desde ""
+    elif [ $((ahora - desde)) -ge $espera ]; then
+      avisar "⚠️ $nombre: sigue el bundle viejo" "Hace ${transcurrido}m que mergeaste: ${titulo}. Producción no cambió: mirá el build." Basso
+      guardar "$nombre" desde ""
+    fi
+  fi
+done
