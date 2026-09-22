@@ -1,4 +1,4 @@
-# "Oye Siri, preguntale a Claude"
+# "Oye Siri, consulta Claude"
 
 El iPhone entra por SSH a la Mac, corre `claude-siri "<lo que dijiste>"` y Siri te lee la respuesta.
 
@@ -34,7 +34,9 @@ Así el Atajo anda desde cualquier red, sin abrir puertos. Si sólo lo vas a usa
 
 ## 3. En el iPhone: el Atajo
 
-App **Atajos** → **+** → nombralo **Preguntale a Claude** (esa frase es la que le decís a Siri).
+App **Atajos** → **+** → nombralo **Consulta Claude** (esa frase es la que le decís a Siri).
+
+> No lo llames "Preguntale a Claude" ni "Mandale a…": Siri entiende "preguntale a X" como un mensaje a un contacto y abre WhatsApp o Mensajes en vez del Atajo. Usá una frase que no suene a mandarle algo a una persona: "Consulta Claude", "Modo Claude", "Claude responde".
 
 1. Acción **Dictar texto** (idioma: Español).
 2. Acción **Ejecutar script por SSH**:
@@ -58,7 +60,14 @@ chmod 600 ~/.ssh/authorized_keys
 
 ## 4. Probar
 
-"Oye Siri, preguntale a Claude" → "¿qué cambió hoy en mi-proyecto?"
+"Oye Siri, consulta Claude" → "¿qué cambió hoy en mi-proyecto?"
+
+### Sin Siri: botón de Acción o Tocar atrás
+
+Para no depender de que Siri entienda el nombre:
+
+- **Botón de Acción** (iPhone 15 Pro o posterior): *Configuración → Botón de acción → Atajo* → elegí el tuyo. Mantenés apretado, dictás y te lee la respuesta.
+- **Tocar atrás** (cualquier iPhone reciente): *Configuración → Accesibilidad → Tocar → Tocar atrás → Doble toque* → el Atajo.
 
 `claude-siri` usa Sonnet (rápido) y sólo herramientas de lectura y web: no puede modificar archivos ni correr comandos. Tarda unos 5 a 15 segundos. Para cambiar la carpeta o el modelo, editá `CLAUDE_SIRI_DIR` y `CLAUDE_SIRI_MODELO` en `~/.config/claude-gadgets/config`.
 

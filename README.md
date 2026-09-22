@@ -9,7 +9,7 @@ Se instalan con un comando y se desinstalan con otro.
 | **Statusline** | Abajo de cada sesión: `modelo · carpeta (rama*) · ctx 25% · 5h 3% · 7d 45% · $1.23`. Verde, amarillo desde el 50 %, rojo desde el 80 %. |
 | **Avisos** (hooks) | Notificación y sonido cuando Claude termina o te necesita, sólo si no estás mirando la Terminal. |
 | **Finder** | Clic derecho sobre un archivo → *Acciones rápidas* → **Preguntarle a Claude**. Le preguntás algo y la respuesta se abre en TextEdit. Claude sólo puede leer. |
-| **Siri / Atajos** | `claude-siri "pregunta"`: una respuesta corta para leer en voz alta. Con un Atajo del iPhone y SSH queda en "Oye Siri, preguntale a Claude". Ver [docs/SIRI.md](docs/SIRI.md). |
+| **Siri / Atajos** | `claude-siri "pregunta"`: una respuesta corta para leer en voz alta. Con un Atajo del iPhone y SSH queda en "Oye Siri, consulta Claude" o en el botón de Acción. Ver [docs/SIRI.md](docs/SIRI.md). |
 | **Permisos** (opcional) | Deja correr sin preguntar comandos de sólo lectura (`git status/log/diff`, `ls`, `gh pr view`, `railway logs`…). |
 
 ## Instalar
