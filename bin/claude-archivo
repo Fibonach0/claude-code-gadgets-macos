@@ -19,7 +19,7 @@ osascript -e "display notification \"Leyendo $(basename "$1")…\" with title \"
 salida="${TMPDIR:-/tmp}/claude-$(basename "$1" | tr ' /' '__')-$(date +%H%M%S).md"
 {
   echo "# $(basename "$1")"; echo; echo "> $pedido"; echo
-  cd "$(dirname "$1")" && claude -p "Archivos:
+  cd "$(dirname "$1")" && claude --no-session-persistence -p "Archivos:
 $nombres
 $pedido" "${dirs[@]}" --permission-mode dontAsk --allowedTools "Read" "Grep" "Glob" </dev/null 2>&1
 } > "$salida"

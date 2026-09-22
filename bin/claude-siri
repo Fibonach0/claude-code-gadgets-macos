@@ -14,7 +14,7 @@ pregunta="$*"
 [ -z "$pregunta" ] && { echo "No me llegó ninguna pregunta."; exit 1; }
 dir="${CLAUDE_SIRI_DIR:-$HOME/proyectos}"; [ -d "$dir" ] || dir="$HOME"
 cd "$dir" || exit 1
-claude -p "$pregunta" \
+claude -p "$pregunta" --no-session-persistence \
   --model "${CLAUDE_SIRI_MODELO:-sonnet}" \
   --permission-mode dontAsk \
   --allowedTools "Read" "Grep" "Glob" "WebSearch" "WebFetch" \

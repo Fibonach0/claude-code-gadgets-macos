@@ -46,7 +46,9 @@ App **Atajos** → **+** → nombralo **Consulta Claude** (esa frase es la que l
    - Autenticación: **Clave SSH**. Tocá "Clave SSH" → *Generar* → *Compartir clave pública*, y pegá esa línea en la Mac, en `~/.ssh/authorized_keys` (ver abajo).
    - Script: `~/.local/bin/claude-siri` (sólo eso, sin comillas ni variables)
    - Entrada: **Texto dictado**. La pregunta le llega a `claude-siri` por la entrada, así no se rompe con comillas o apóstrofes.
-3. Acción **Leer texto** con el *Resultado del shell*, para que Siri lo diga en voz alta (o **Mostrar resultado** para verlo en pantalla).
+3. Acción **Mostrar resultado** con el *Resultado del shell*. Cuando lo lanzás por voz, Siri lo lee en voz alta; si no, lo ves en pantalla.
+
+> No uses **Leer texto** como último paso: lanzado desde Siri muchas veces no suena (compite con la voz de Siri) y Siri sólo dice "Hecho".
 
 > Error común: escribir `" + Texto dictado "` a mano en el script. Claude recibe ese texto literal y contesta cualquier cosa.
 
