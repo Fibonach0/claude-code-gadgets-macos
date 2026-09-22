@@ -8,7 +8,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 # Por SSH el llavero de macOS está bloqueado y Claude Code no encuentra el login:
 # se usa el token largo de `claude setup-token`, guardado en este archivo.
 tok=~/.config/claude-gadgets/token
-[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(<"$tok")"
+[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d "[:space:]" < "$tok")"  # sin saltos de línea (al copiar de la Terminal se cortan)
 pregunta="$*"
 [ -z "$pregunta" ] && pregunta=$(cat)
 [ -z "$pregunta" ] && { echo "No me llegó ninguna pregunta."; exit 1; }
