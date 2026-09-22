@@ -40,10 +40,13 @@ App **Atajos** → **+** → nombralo **Preguntale a Claude** (esa frase es la q
 2. Acción **Ejecutar script por SSH**:
    - Anfitrión: `mi-mac` (Tailscale) o la IP de la Mac
    - Puerto: `22`
-   - Usuario: tu usuario de la Mac
+   - Usuario: tu usuario de la Mac, exacto (lo ves con `whoami`; un error de tipeo da "Error de autenticación de clave SSH")
    - Autenticación: **Clave SSH**. Tocá "Clave SSH" → *Generar* → *Compartir clave pública*, y pegá esa línea en la Mac, en `~/.ssh/authorized_keys` (ver abajo).
-   - Script: `~/.local/bin/claude-siri "` + *Texto dictado* + `"`
-3. Acción **Mostrar resultado** (o **Leer texto** para que Siri lo diga en voz alta).
+   - Script: `~/.local/bin/claude-siri` (sólo eso, sin comillas ni variables)
+   - Entrada: **Texto dictado**. La pregunta le llega a `claude-siri` por la entrada, así no se rompe con comillas o apóstrofes.
+3. Acción **Leer texto** con el *Resultado del shell*, para que Siri lo diga en voz alta (o **Mostrar resultado** para verlo en pantalla).
+
+> Error común: escribir `" + Texto dictado "` a mano en el script. Claude recibe ese texto literal y contesta cualquier cosa.
 
 Agregar la clave en la Mac:
 
