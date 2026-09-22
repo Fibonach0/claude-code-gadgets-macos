@@ -54,9 +54,10 @@ install -m 755 "$AQUI/claude/statusline.sh" "$CLAUDE_DIR/statusline.sh"
 respaldar "$AQUI/claude/hooks/avisar.sh" "$CLAUDE_DIR/hooks/avisar.sh"
 install -m 755 "$AQUI/claude/hooks/avisar.sh" "$CLAUDE_DIR/hooks/avisar.sh"
 install -m 755 "$AQUI/claude/hooks/frenar.sh" "$CLAUDE_DIR/hooks/frenar.sh"
+install -m 755 "$AQUI/claude/hooks/prebuild-check.sh" "$CLAUDE_DIR/hooks/prebuild-check.sh"
 for f in "$AQUI"/bin/*; do install -m 755 "$f" "$GADGETS/bin/"; done
 mkdir -p "$HOME/.local/bin"
-for c in claude-siri claude-estado claude-guardia claude-buzon; do
+for c in claude-siri claude-estado claude-guardia claude-buzon claude-anotar claude-permitir claude-jobs claude-prebuild; do
   ln -sf "$GADGETS/bin/$c" "$HOME/.local/bin/$c"
 done
 ok "statusline, hooks y comandos en $GADGETS/bin (claude-siri en ~/.local/bin)"
@@ -77,9 +78,11 @@ jq --argjson eventos "$(cat "$AQUI/config/hooks.json")" --argjson permisos "$per
   | .hooks = (.hooks // {})
   | .hooks.PreToolUse = (
       [ (.hooks.PreToolUse // [])[]
-        | .hooks = [ .hooks[] | select((.command // "") | contains("hooks/frenar.sh") | not) ]
+        | .hooks = [ .hooks[] | select((.command // "") | test("hooks/(frenar|prebuild-check)\\.sh") | not) ]
         | select(.hooks | length > 0) ]
-      + [ {matcher:"Bash", hooks:[{type:"command", command:"~/.claude/hooks/frenar.sh", timeout:10}]} ])
+      + [ {matcher:"Bash", hooks:[
+            {type:"command", command:"~/.claude/hooks/frenar.sh", timeout:10},
+            {type:"command", command:"~/.claude/hooks/prebuild-check.sh", if:"Bash(gh pr merge:*)", timeout:60}]} ])
   | reduce ($eventos | to_entries[]) as $e (.;
       .hooks[$e.key] = (
         [ (.hooks[$e.key] // [])[]

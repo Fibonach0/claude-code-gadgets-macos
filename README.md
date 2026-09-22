@@ -14,6 +14,10 @@ Se instalan con un comando y se desinstalan con otro.
 | **Buzón** | `claude-buzon`: dejás una foto, PDF o Excel en una carpeta de iCloud Drive (también desde el iPhone) y aparece al lado una ficha en `.md` con los datos. |
 | **Estado** | `claude-estado`: en una pantalla, servicios arriba o abajo, qué se mergeó hoy, PRs abiertos, deploys en curso y tu cupo de Claude. Va bien como Atajo del iPhone. |
 | **Freno de mano** | Hook `PreToolUse` que frena lo irreversible antes de que pase: push forzado, `rm -rf` con comodín, DROP/TRUNCATE, variables de producción, borrar repos o credenciales. |
+| **Guardián de jobs** | `claude-jobs`: revisa en los logs si los trabajos programados de tu servidor corrieron a la hora que tenían, y avisa sólo si falta alguno. |
+| **Build de prueba** | `claude-prebuild`: compila el front en un volumen sensible a mayúsculas (como Linux) y caza los imports que en la Mac pasan. Un hook lo exige antes de mergear un PR que toca el front. |
+| **Anotar por voz** | `claude-anotar "…"`: guarda un pendiente con fecha y proyecto (lo clasifica solo). Va bien como Atajo del iPhone. |
+| **Autorizar desde el celular** | `claude-permitir`: deja pasar, una vez y por 10 minutos, el último comando que frenó el freno de mano. |
 | **Permisos** (opcional) | Deja correr sin preguntar comandos de sólo lectura (`git status/log/diff`, `ls`, `gh pr view`, `railway logs`…). |
 
 ## Instalar
@@ -75,13 +79,27 @@ GUARDIA_ESPERA=15                            # minutos antes de dar el deploy po
 BUZON="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude"
 NTFY_TOPIC=""                                # opcional: avisos al celular por ntfy.sh
 FRENO=1                                      # 0 apaga el freno de mano
+
+# Guardián de trabajos programados (usa el conector de Railway vía Claude)
+JOBS_SERVICIO="el servicio web del proyecto tal"
+JOBS=("backup_diario|03:00|guarda el dump" "aviso_precios|08:15|")
+JOBS_HORA=10
+
+# Build de prueba antes de mergear front
+PREBUILD_DIR="$HOME/proyectos/hub/front"
+PREBUILD_PATRON="^front/"                    # qué rutas del PR lo exigen
+
+# Pendientes dictados
+PENDIENTES="$HOME/Documents/Pendientes.md"
+ANOTAR_PISTAS="el hub es tal repo; el bot es tal otro"
 ```
 
-Los dos que corren solos se prenden a mano, una vez:
+Los que corren solos, una vez cada uno:
 
 ```bash
-claude-guardia --instalar    # revisa cada 2 minutos
-claude-buzon --instalar      # crea la carpeta y la escucha
+claude-guardia --instalar    # deploys, cada 2 minutos
+claude-buzon --instalar      # la carpeta mágica
+claude-jobs --instalar       # los trabajos programados, una vez por día
 ```
 
 > `NTFY_TOPIC` manda los avisos a ntfy.sh, un servicio público: cualquiera que
@@ -102,6 +120,7 @@ install.sh / uninstall.sh
 claude/statusline.sh          statusline + guarda el uso
 claude/hooks/avisar.sh        avisos + estado de sesiones
 claude/hooks/frenar.sh        freno de mano (PreToolUse)
+claude/hooks/prebuild-check.sh  exige build verde antes de mergear front
 swiftbar/claude.1m.sh         plugin de la barra (cada 1 min)
 bin/claude-siri               pregunta corta para Siri/SSH
 bin/claude-archivo            lo que corre la acción de Finder
@@ -109,8 +128,13 @@ bin/claude-limpiar-estado     borra sesiones colgadas del menú
 bin/claude-guardia            guardián de deploys (launchd, cada 2 min)
 bin/claude-buzon              carpeta mágica en iCloud Drive (launchd)
 bin/claude-estado             estado de todo en una pantalla
+bin/claude-jobs               ¿corrieron los trabajos programados?
+bin/claude-prebuild           build en volumen sensible a mayúsculas
+bin/claude-anotar             pendientes dictados
+bin/claude-permitir           autoriza el último comando frenado
 finder/Preguntarle a Claude.workflow
 config/                       ejemplo de config, hooks, permisos
-pruebas/probar_freno.sh       24 casos: lo que el freno frena y lo que deja pasar
+pruebas/                      24 casos del freno, el circuito de autorización
+                              y los 5 casos del hook de build
 docs/SIRI.md                  paso a paso del Atajo del iPhone
 ```

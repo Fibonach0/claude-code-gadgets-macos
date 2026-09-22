@@ -1,0 +1,82 @@
+#!/bin/bash
+# Build de prueba en un volumen SENSIBLE A MAYÚSCULAS, para cazar antes de
+# mergear los errores que sólo aparecen en Linux (Cloudflare Pages, Vercel,
+# Netlify, cualquier CI): un import escrito con el case equivocado compila
+# feliz en la Mac y rompe el build de producción.
+#
+# El volumen se crea una sola vez como imagen de disco y se monta solo.
+# node_modules se enlaza al del repo, así no hay que instalar de nuevo.
+#
+#   claude-prebuild            build del front configurado
+#   claude-prebuild <carpeta>  build de otra carpeta
+#   claude-prebuild --estado   resultado del último build
+#
+# Config en ~/.config/claude-gadgets/config:
+#   PREBUILD_DIR="$HOME/proyectos/hub/front"
+#   PREBUILD_CMD="CI=false GENERATE_SOURCEMAP=false npx react-scripts build"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+est=~/.claude/estado; mkdir -p "$est"
+marca="$est/prebuild.json"; log="$est/prebuild.log"
+dmg=~/.claude/gadgets/csbuild.dmg
+punto=/Volumes/claude-cs
+
+[ "${1:-}" = --estado ] && { [ -f "$marca" ] && jq -r '"\(if .ok then "✅ OK" else "❌ FALLÓ" end) · \(.dir) · commit \(.sha[0:7]) · \(.cuando)"' "$marca" || echo "Todavía no corrió ningún build."; exit 0; }
+
+origen="${1:-${PREBUILD_DIR:-}}"
+[ -z "$origen" ] && { echo "Decime qué carpeta buildear (o definí PREBUILD_DIR en $conf)"; exit 1; }
+origen=$(cd "$origen" && pwd) || exit 1
+[ -f "$origen/package.json" ] || { echo "$origen no parece un proyecto de node (no hay package.json)"; exit 1; }
+
+# ── 1. Volumen sensible a mayúsculas ─────────────────────────────────────────
+if [ ! -d "$punto" ]; then
+  if [ ! -f "$dmg" ]; then
+    echo "Creando el volumen sensible a mayúsculas (una sola vez)…"
+    hdiutil create -size 3g -fs "Case-sensitive APFS" -volname claude-cs -quiet "$dmg" || exit 1
+  fi
+  hdiutil attach "$dmg" -quiet -nobrowse -mountpoint "$punto" || exit 1
+fi
+
+# Reproduzco la estructura del repo: si node_modules está en la raíz (monorepo
+# con hoisting), node lo encuentra subiendo, igual que en Linux.
+raiz=$(git -C "$origen" rev-parse --show-toplevel 2>/dev/null || echo "$origen")
+rel=${origen#"$raiz"/}; [ "$rel" = "$origen" ] && rel="."
+destino="$punto/$(basename "$raiz")"
+mkdir -p "$destino/$rel"
+
+# ── 2. Copiar el código (sin node_modules ni build) ──────────────────────────
+rsync -a --delete --exclude node_modules --exclude build --exclude .git "$origen/" "$destino/$rel/"
+enlazar() {  # enlaza el node_modules de $1 dentro del volumen, si existe y sirve
+  [ -d "$1/node_modules" ] || return 0
+  local sub=${1#"$raiz"}; sub=${sub#/}
+  mkdir -p "$destino${sub:+/$sub}"
+  ln -sfn "$1/node_modules" "$destino${sub:+/$sub}/node_modules"
+}
+enlazar "$raiz"; enlazar "$origen"
+[ -e "$destino/node_modules" ] || [ -e "$destino/$rel/node_modules" ] || {
+  echo "No encontré node_modules en $raiz ni en $origen: instalá las dependencias primero."; exit 1; }
+
+# ── 3. Build ─────────────────────────────────────────────────────────────────
+sha=$(git -C "$origen" rev-parse HEAD 2>/dev/null || echo desconocido)
+echo "Buildeando $origen en $punto (sensible a mayúsculas)…"
+inicio=$(date +%s)
+salida=$(cd "$destino/$rel" && eval "${PREBUILD_CMD:-CI=false GENERATE_SOURCEMAP=false npx react-scripts build}" 2>&1)
+rc=$?
+seg=$(( $(date +%s) - inicio ))
+
+{ echo "=== $(date '+%d/%m %H:%M') · $origen · rc=$rc · ${seg}s"; printf '%s\n' "$salida" | tail -40; } >> "$log"
+jq -n --arg d "$origen" --arg s "$sha" --argjson ok "$([ $rc = 0 ] && echo true || echo false)" \
+   --arg c "$(date '+%d/%m %H:%M')" '{dir:$d, sha:$s, ok:$ok, cuando:$c, ts:(now|floor)}' > "$marca"
+
+if [ $rc = 0 ]; then
+  echo "✅ Compila también en Linux (${seg}s)."
+  osascript -e 'display notification "El front compila en un volumen sensible a mayúsculas" with title "Build de prueba OK" sound name "Hero"' >/dev/null 2>&1 & disown
+else
+  echo "❌ El build FALLA (${seg}s). Esto mismo va a romper en producción:"
+  printf '%s\n' "$salida" | grep -iE "error|failed|cannot find|does not contain" | head -12
+  echo "(el detalle completo, en $log)"
+  osascript -e 'display notification "El front NO compila: mirá claude-prebuild" with title "Build de prueba FALLÓ" sound name "Basso"' >/dev/null 2>&1 & disown
+fi
+exit $rc

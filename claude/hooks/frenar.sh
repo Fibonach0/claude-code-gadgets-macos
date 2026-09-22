@@ -16,20 +16,44 @@ export LANG=${LANG:-es_AR.UTF-8}
 [ -f ~/.config/claude-gadgets/config ] && . ~/.config/claude-gadgets/config
 [ "${FRENO:-1}" = 0 ] && exit 0
 
+est=~/.claude/estado; mkdir -p "$est"
+permiso="$est/freno-permiso"; ultimo="$est/freno-ultimo.json"
+
 entrada=$(cat)
 cmd=$(jq -r '.tool_input.command // empty' <<<"$entrada")
 [ -z "$cmd" ] && exit 0
 plano=$(tr '\n' ' ' <<<"$cmd")
 
+# Si el usuario autorizó este comando desde el teléfono (claude-permitir),
+# pasa una sola vez y dentro de los 10 minutos.
+autorizado() {
+  [ -f "$permiso" ] || return 1
+  local guardado vence
+  guardado=$(sed -n 1p "$permiso"); vence=$(sed -n 2p "$permiso")
+  [ "$guardado" = "$(shasum <<<"$plano" | cut -d' ' -f1)" ] || return 1
+  [ "$(date +%s)" -le "${vence:-0}" ] || return 1
+  rm -f "$permiso"; return 0
+}
+
 frenar() {  # motivo
+  autorizado && exit 0
   jq -n --arg r "$1" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
       permissionDecisionReason: ("FRENO DE MANO: " + $r + " Si de verdad hace falta, pedíselo al usuario y que lo corra él.")
     }}'
-  mkdir -p ~/.claude/estado
-  printf '%s | %s :: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$(cut -c1-120 <<<"$plano")" >> ~/.claude/estado/freno.log
+  printf '%s | %s :: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$(cut -c1-120 <<<"$plano")" >> "$est/freno.log"
+  # Queda anotado para que claude-permitir pueda autorizarlo desde el celular.
+  jq -n --arg c "$plano" --arg m "$1" --arg h "$(shasum <<<"$plano" | cut -d' ' -f1)" \
+     '{comando:$c, motivo:$m, sha:$h, ts:(now|floor)}' > "$ultimo"
+  # Aviso al celular (opcional): va sólo el motivo y el arranque del comando.
+  if [ -n "$NTFY_TOPIC" ]; then
+    curl -s -m 5 -H "Title: Claude frenado" -H "Priority: default" \
+      -d "$1
+$(cut -c1-60 <<<"$plano")
+Para dejarlo pasar: atajo Permitir (vale 10 min)." "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
+  fi
   exit 0
 }
 

@@ -1,0 +1,56 @@
+#!/bin/bash
+# "Anotá esto": guarda una idea o pendiente dictado, con fecha y proyecto.
+# Pensado para un Atajo del iPhone (Dictar texto → Ejecutar script por SSH),
+# pero sirve igual en la terminal.
+#
+#   claude-anotar "llamar al despachante por la REM de mañana"
+#   claude-anotar --ver          últimos 15 pendientes
+#   claude-anotar --hechos       marca como hecho (interactivo, en la terminal)
+#
+# Config en ~/.config/claude-gadgets/config:
+#   PENDIENTES="$HOME/Documents/Pendientes.md"
+#   ANOTAR_CLASIFICA=1   # 1 = Claude le pone el proyecto que corresponde
+#   ANOTAR_PISTAS="el hub y las planillas son del repo X; el bot de WhatsApp es Y"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+tok=~/.config/claude-gadgets/token
+[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$tok")"
+archivo="${PENDIENTES:-$HOME/Documents/Pendientes.md}"
+mkdir -p "$(dirname "$archivo")"
+[ -f "$archivo" ] || printf '# Pendientes\n\n' > "$archivo"
+
+case "${1:-}" in
+  --ver)
+    grep -n '^- \[ \]' "$archivo" | tail -15 | sed 's/^\([0-9]*\):- \[ \] /\1. /'; exit 0 ;;
+  --hechos)
+    grep -n '^- \[ \]' "$archivo" | tail -15 | sed 's/^\([0-9]*\):- \[ \] /\1. /'
+    printf 'Número de línea a marcar como hecho (Enter para salir): '; read -r l
+    [ -z "$l" ] && exit 0
+    sed -i '' "${l}s/- \[ \]/- [x]/" "$archivo" && echo "✓ Marcado"; exit 0 ;;
+esac
+
+nota="$*"
+[ -z "$nota" ] && nota=$(cat)
+nota=$(sed -E 's/^ +| +$//g' <<<"$nota")
+[ -z "$nota" ] && { echo "No me llegó nada para anotar."; exit 1; }
+
+etiqueta=""
+if [ "${ANOTAR_CLASIFICA:-1}" = 1 ] && command -v claude >/dev/null; then
+  dir="${CLAUDE_SIRI_DIR:-$HOME/proyectos}"
+  proyectos=$(ls -d "$dir"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')
+  etiqueta=$(claude -p "Clasificá este pendiente dictado: \"$nota\".
+Proyectos posibles: $proyectos, oficina, casa, personal.
+${ANOTAR_PISTAS:+Pistas: $ANOTAR_PISTAS}
+Respondé UNA sola palabra: el proyecto que mejor encaja. Sin explicar nada." \
+    --no-session-persistence --model haiku --permission-mode dontAsk --allowedTools "" </dev/null 2>/dev/null \
+    | tr -d '\n' | tr -cd '[:alnum:]-_' | cut -c1-24)
+fi
+
+fecha=$(date '+%d/%m %H:%M')
+linea="- [ ] $nota"
+[ -n "$etiqueta" ] && linea="$linea  _($etiqueta · $fecha)_" || linea="$linea  _($fecha)_"
+printf '%s\n' "$linea" >> "$archivo"
+osascript -e "display notification \"${nota//\"/\'}\" with title \"Anotado${etiqueta:+ · $etiqueta}\" sound name \"Pop\"" >/dev/null 2>&1 & disown
+echo "Anotado${etiqueta:+ en $etiqueta}: $nota"

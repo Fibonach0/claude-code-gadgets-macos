@@ -1,0 +1,93 @@
+#!/bin/bash
+# Guardián de trabajos programados: revisa en los logs si los jobs de tu bot
+# corrieron a la hora que tenían que correr, y te avisa sólo si falta alguno.
+#
+# Usa Claude con el conector de Railway (los logs), así que no hace falta
+# tener el CLI de Railway ni un token guardado.
+#
+#   claude-jobs              revisa ahora
+#   claude-jobs --instalar   lo deja corriendo todos los días (hora configurable)
+#   claude-jobs --desinstalar
+#
+# Config en ~/.config/claude-gadgets/config:
+#   JOBS_SERVICIO="el servicio web del proyecto gentle-learning"
+#   JOBS=("ypf_diario|08:15|baja precios y avisa"
+#         "guardian_volcados|07:00|")
+#   JOBS_HORA=10      # a qué hora revisa (una vez por día)
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+# OJO: acá NO se usa el token de `claude setup-token`. Con ese login los
+# conectores de claude.ai (Railway, Gmail…) no están disponibles; con la sesión
+# normal de la Mac sí. Por eso este gadget corre local (launchd), no por SSH.
+est=~/.claude/estado; mkdir -p "$est"
+log="$est/jobs.log"; salida="$est/jobs.json"
+plist=~/Library/LaunchAgents/com.claude-gadgets.jobs.plist
+
+avisar() { local t=${1//\"/\'} m=${2//\"/\'}
+  osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Basso}\"" >/dev/null 2>&1 & disown
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: $1" -d "$2" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
+  printf '%s | %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"; }
+
+case "${1:-}" in
+  --instalar)
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.jobs</string>
+  <key>ProgramArguments</key><array><string>$HOME/.claude/gadgets/bin/claude-jobs</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${JOBS_HORA:-10}</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/jobs.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+      && echo "✓ Reviso los jobs todos los días a las ${JOBS_HORA:-10}:00"; exit 0 ;;
+  --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Guardián de jobs apagado"; exit 0 ;;
+  --ultimo) [ -f "$salida" ] && jq -r '.[] | "\(if .ok then "OK " else "FALTA" end) \(.id): \(.detalle)"' "$salida"; exit 0 ;;
+esac
+
+[ ${#JOBS[@]} -eq 0 ] && { echo "Nada que revisar: definí JOBS en $conf"; exit 0; }
+
+lista=""
+for fila in "${JOBS[@]}"; do
+  IFS='|' read -r id hora que <<<"$fila"
+  lista+="- $id: tenía que correr hoy a las $hora${que:+ ($que)}"$'\n'
+done
+
+pedido="Revisá en los logs de Railway de ${JOBS_SERVICIO:-el servicio principal} si estos trabajos programados corrieron HOY:
+$lista
+Para cada uno buscá su rastro en los logs de hoy (nombre del job, errores, excepciones).
+Respondé SÓLO un JSON, sin texto alrededor, con esta forma:
+[{\"id\":\"...\",\"ok\":true,\"detalle\":\"corrió 08:15, 1703 filas\"}]
+ok=false si no corrió, si falló, o si no encontrás rastro. En detalle, una frase corta en castellano."
+
+respuesta=$(claude -p "$pedido" --no-session-persistence --model sonnet --permission-mode dontAsk \
+  --allowedTools "mcp__claude_ai_Railway__get-logs" "mcp__claude_ai_Railway__list-projects" \
+                 "mcp__claude_ai_Railway__list-services" "mcp__claude_ai_Railway__list-deployments" \
+  </dev/null 2>&1)
+
+# El modelo a veces lo envuelve en ```json: me quedo con el array más grande.
+json=$(python3 -c "
+import sys
+t = sys.stdin.read()
+i, j = t.find('['), t.rfind(']')
+print(t[i:j+1] if i >= 0 and j > i else '')" <<<"$respuesta")
+if ! jq -e . >/dev/null 2>&1 <<<"$json"; then
+  avisar "Guardián de jobs" "No pude leer los logs (¿Railway conectado?). Mirá $log"
+  printf '%s | respuesta sin JSON: %s\n' "$(date '+%d/%m %H:%M')" "$(cut -c1-200 <<<"$respuesta")" >> "$log"
+  exit 1
+fi
+printf '%s' "$json" > "$salida"
+
+faltan=$(jq -r '[.[] | select(.ok | not)] | length' <<<"$json")
+if [ "$faltan" -gt 0 ]; then
+  detalle=$(jq -r '[.[] | select(.ok | not) | "\(.id): \(.detalle)"] | join(" · ")' <<<"$json")
+  avisar "⚠️ $faltan trabajo(s) sin correr" "$detalle" Basso
+else
+  printf '%s | todos los jobs corrieron: %s\n' "$(date '+%d/%m %H:%M')" \
+    "$(jq -r '[.[].id] | join(", ")' <<<"$json")" >> "$log"
+fi
+jq -r '.[] | "\(if .ok then "OK   " else "FALTA" end) \(.id): \(.detalle)"' <<<"$json"

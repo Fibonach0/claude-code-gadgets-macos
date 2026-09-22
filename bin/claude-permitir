@@ -1,0 +1,40 @@
+#!/bin/bash
+# Autoriza, por una vez y por 10 minutos, el último comando que frenó el freno
+# de mano. Pensado para un Atajo del iPhone (SSH), así podés destrabar a Claude
+# sin ir hasta la compu.
+#
+#   claude-permitir            autoriza el último comando frenado
+#   claude-permitir --ver      muestra cuál fue, sin autorizar nada
+#   claude-permitir --cancelar anula una autorización que diste recién
+#
+# Seguridad: sólo vale para ESE comando exacto (se guarda su huella), una sola
+# vez, y se vence a los 10 minutos. No abre el freno para nada más.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+est=~/.claude/estado
+ultimo="$est/freno-ultimo.json"; permiso="$est/freno-permiso"
+minutos=${FRENO_MINUTOS:-10}
+
+[ -f "$ultimo" ] || { echo "No hay ningún comando frenado."; exit 1; }
+cmd=$(jq -r .comando "$ultimo"); motivo=$(jq -r .motivo "$ultimo")
+sha=$(jq -r .sha "$ultimo");     ts=$(jq -r .ts "$ultimo")
+edad=$(( ($(date +%s) - ts) / 60 ))
+
+case "${1:-}" in
+  --ver)
+    echo "Frenado hace ${edad}m: $motivo"; echo "$cmd"; exit 0 ;;
+  --cancelar)
+    rm -f "$permiso"; echo "Autorización anulada."; exit 0 ;;
+esac
+
+if [ "$edad" -gt 60 ]; then
+  echo "El último frenado fue hace ${edad} minutos, ya es viejo. Pedíselo de nuevo a Claude y volvé a autorizar."
+  exit 1
+fi
+
+printf '%s\n%s\n' "$sha" "$(( $(date +%s) + minutos * 60 ))" > "$permiso"
+chmod 600 "$permiso"
+echo "Autorizado por $minutos minutos, una sola vez:"
+echo "$cmd"
+echo "(era: $motivo)"
+osascript -e "display notification \"${cmd:0:80}\" with title \"Comando autorizado\" sound name \"Pop\"" >/dev/null 2>&1 & disown

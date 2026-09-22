@@ -30,3 +30,21 @@
 
 # ── Freno de mano ────────────────────────────────────────────────────────────
 # FRENO=0    # lo apaga
+
+# ── Guardián de trabajos programados ─────────────────────────────────────────
+# Revisa los logs con Claude + el conector de Railway (corre local, no por SSH).
+# JOBS_SERVICIO="el servicio web del proyecto tal"
+# JOBS=("backup_diario|03:00|guarda el dump"
+#       "aviso_precios|08:15|")
+# JOBS_HORA=10
+
+# ── Build de prueba (sensible a mayúsculas, como Linux) ──────────────────────
+# PREBUILD_DIR="$HOME/proyectos/hub/front"
+# PREBUILD_CMD="CI=false GENERATE_SOURCEMAP=false npx react-scripts build"
+# PREBUILD_PATRON="^front/"   # qué rutas del PR exigen build verde
+# PREBUILD_CHECK=0            # desactiva el hook antes de mergear
+
+# ── Pendientes dictados ──────────────────────────────────────────────────────
+# PENDIENTES="$HOME/Documents/Pendientes.md"
+# ANOTAR_CLASIFICA=1
+# ANOTAR_PISTAS="el hub es tal repo; el bot de WhatsApp es tal otro"

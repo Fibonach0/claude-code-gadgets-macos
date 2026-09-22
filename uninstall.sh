@@ -12,7 +12,7 @@ if [ -f "$SETTINGS" ]; then
     (if (.statusLine.command // "") == "~/.claude/statusline.sh" then del(.statusLine) else . end)
     | if .hooks then
         .hooks |= (with_entries(.value |= [ .[]
-            | .hooks = [ .hooks[] | select((.command // "") | test("hooks/(avisar|frenar)\\.sh") | not) ]
+            | .hooks = [ .hooks[] | select((.command // "") | test("hooks/(avisar|frenar|prebuild-check)\\.sh") | not) ]
             | select(.hooks | length > 0) ])
           | with_entries(select(.value | length > 0)))
       else . end
@@ -24,8 +24,9 @@ fi
 
 "$CLAUDE_DIR/gadgets/bin/claude-guardia" --desinstalar 2>/dev/null
 "$CLAUDE_DIR/gadgets/bin/claude-buzon" --desinstalar 2>/dev/null
-rm -f "$CLAUDE_DIR/statusline.sh" "$CLAUDE_DIR/hooks/avisar.sh" "$CLAUDE_DIR/hooks/frenar.sh"
-for c in claude-siri claude-estado claude-guardia claude-buzon; do rm -f "$HOME/.local/bin/$c"; done
+"$CLAUDE_DIR/gadgets/bin/claude-jobs" --desinstalar 2>/dev/null
+rm -f "$CLAUDE_DIR/statusline.sh" "$CLAUDE_DIR/hooks/avisar.sh" "$CLAUDE_DIR/hooks/frenar.sh" "$CLAUDE_DIR/hooks/prebuild-check.sh"
+for c in claude-siri claude-estado claude-guardia claude-buzon claude-anotar claude-permitir claude-jobs claude-prebuild; do rm -f "$HOME/.local/bin/$c"; done
 dir_plugins=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)
 [ -n "$dir_plugins" ] && [ -L "$dir_plugins/claude.1m.sh" ] && rm -f "$dir_plugins/claude.1m.sh"
 [ "$dir_plugins" = "$CLAUDE_DIR/gadgets/swiftbar" ] && defaults delete com.ameba.SwiftBar PluginDirectory 2>/dev/null || true

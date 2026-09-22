@@ -57,10 +57,25 @@ esac
 
 [ -d "$buzon" ] || { echo "No existe la carpeta: $buzon (corré claude-buzon --instalar)"; exit 1; }
 mkdir -p "$listos"
-extras=""; [ -f "$buzon/_instrucciones.md" ] && extras=$(cat "$buzon/_instrucciones.md")
-
 shopt -s nullglob
-for f in "$buzon"/*; do
+
+# Carpetas a mirar: el buzón y sus subcarpetas (menos Procesados). Cada una
+# puede tener su propio _instrucciones.md: así "Fojas y REM" pide una cosa y el
+# buzón general otra.
+carpetas=("$buzon")
+for sub in "$buzon"/*/; do
+  sub=${sub%/}
+  [ "$(basename "$sub")" = "$(basename "$listos")" ] && continue
+  carpetas+=("$sub")
+done
+
+for carpeta in "${carpetas[@]}"; do
+listos="$carpeta/Procesados"; mkdir -p "$listos"
+extras=""
+for i in "$carpeta/_instrucciones.md" "$buzon/_instrucciones.md"; do
+  [ -f "$i" ] && { extras=$(cat "$i"); break; }
+done
+for f in "$carpeta"/*; do
   [ -f "$f" ] || continue
   n=$(basename "$f")
   case "$n" in .*|_instrucciones.md|*.md) continue ;; esac
@@ -87,14 +102,14 @@ for f in "$buzon"/*; do
   avisar "Buzón" "Leyendo ${n}"
   {
     echo "# $n"; echo; echo "_Procesado $(date '+%d/%m/%Y %H:%M')_"; echo
-    claude -p "Leé $leer_esto y escribí la ficha.
+    claude -p "Leé $leer_esto (carpeta: $(basename "$carpeta")) y escribí la ficha.
 
 $extras
 
 Formato: markdown corto, con los datos en viñetas. Sin preámbulos." \
       --no-session-persistence --model "${BUZON_MODELO:-sonnet}" \
       --permission-mode dontAsk --allowedTools "Read" "Grep" "Glob" \
-      --add-dir "$buzon" ${tmp:+--add-dir "$tmp"} </dev/null 2>&1
+      --add-dir "$carpeta" ${tmp:+--add-dir "$tmp"} </dev/null 2>&1
   } > "$ficha"
   [ -n "$tmp" ] && rm -rf "$tmp"
   if [ -s "$ficha" ] && ! grep -qiE "no puedo|no pude|bloque|permis" "$ficha"; then
@@ -103,4 +118,5 @@ Formato: markdown corto, con los datos en viñetas. Sin preámbulos." \
   else
     avisar "❌ Buzón: no pude con $n" "Quedó en la carpeta para reintentar" Basso
   fi
+done
 done
