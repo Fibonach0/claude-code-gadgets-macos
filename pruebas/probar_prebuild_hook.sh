@@ -2,7 +2,9 @@
 # Prueba el hook que exige build de prueba antes de mergear.
 H=~/.claude/hooks/prebuild-check.sh
 M=~/.claude/estado/prebuild.json
-repo=$HOME/proyectos/cantapp
+# Configurable: REPO_PRUEBA es un repo con front/ y PRs; SLUG su dueño/nombre.
+repo=${REPO_PRUEBA:-$HOME/proyectos/hub}
+SLUG=${SLUG_PRUEBA:-$(git -C "$repo" remote get-url origin 2>/dev/null | sed -E 's#.*github.com[:/]##; s/\.git$//')}
 cp "$M" /tmp/prebuild.bak
 
 probar() {
@@ -13,8 +15,8 @@ probar() {
 
 # ¿Qué PR abierto toca el front?
 pr_front=""; pr_otro=""
-for n in $(gh pr list -R Fibonach0/cantapp --state all --limit 8 --json number --jq '.[].number'); do
-  if gh pr diff -R Fibonach0/cantapp "$n" --name-only 2>/dev/null | grep -qE '^front/'; then
+for n in $(gh pr list -R "$SLUG" --state all --limit 8 --json number --jq '.[].number'); do
+  if gh pr diff -R "$SLUG" "$n" --name-only 2>/dev/null | grep -qE '^front/'; then
     [ -z "$pr_front" ] && pr_front=$n
   else
     [ -z "$pr_otro" ] && pr_otro=$n

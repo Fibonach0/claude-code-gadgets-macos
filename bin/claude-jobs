@@ -10,7 +10,7 @@
 #   claude-jobs --desinstalar
 #
 # Config en ~/.config/claude-gadgets/config:
-#   JOBS_SERVICIO="el servicio web del proyecto gentle-learning"
+#   JOBS_SERVICIO="el servicio web del proyecto tu-proyecto"
 #   JOBS=("ypf_diario|08:15|baja precios y avisa"
 #         "guardian_volcados|07:00|")
 #   JOBS_HORA=10      # a qué hora revisa (una vez por día)
