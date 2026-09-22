@@ -3,8 +3,13 @@
 # tienen vuelta atrás (borrar datos, pisar producción, reescribir la historia
 # de git). No pregunta: los frena y le explica a Claude por qué.
 #
-# Se engancha como hook PreToolUse con matcher "Bash". Lo demás sigue igual:
-# si el comando no está en la lista, este hook no dice nada y todo continúa.
+# Se engancha como hook PreToolUse con matcher "Bash". Si el comando no está en
+# la lista, el hook no dice nada y todo sigue igual.
+#
+# Cómo evita los falsos positivos: el comando se parte en tramos (&&, ||, ;, |)
+# y en cada tramo mira QUIÉN ENCABEZA. Así "git commit -m 'drop table'" o un
+# texto que menciona `rm -rf` no se confunden con la cosa real: sólo frena si el
+# programa peligroso es el que realmente se está por ejecutar.
 #
 # Para desactivarlo un rato: FRENO=0 en ~/.config/claude-gadgets/config
 export LANG=${LANG:-es_AR.UTF-8}
@@ -23,54 +28,74 @@ frenar() {  # motivo
       permissionDecision: "deny",
       permissionDecisionReason: ("FRENO DE MANO: " + $r + " Si de verdad hace falta, pedíselo al usuario y que lo corra él.")
     }}'
+  mkdir -p ~/.claude/estado
   printf '%s | %s :: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$(cut -c1-120 <<<"$plano")" >> ~/.claude/estado/freno.log
   exit 0
 }
-# El comando se parte en tramos (&&, ||, ;, |) y cada uno se mira por separado:
-# así "git commit -m 'drop table'" no se confunde con un DROP TABLE de verdad.
+
 revisar_tramo() {
   local t="$1"
-  local jefe; jefe=$(awk '{for(i=1;i<=NF;i++){if($i !~ /=/){print $i; exit}}}' <<<"$t" | sed 's|.*/||')
+  # Quién encabeza el tramo, salteando VAR=valor, sudo, env, time.
+  local jefe
+  jefe=$(awk '{for(i=1;i<=NF;i++){ if($i ~ /=/ || $i=="sudo" || $i=="env" || $i=="time" || $i=="command") continue; print $i; exit }}' <<<"$t" | sed 's|.*/||')
 
-
-  # ── git: reescribir lo que ya está publicado ──────────────────────────────
-  grep -qiE 'git +push.*(--force([^-]|$)|--force-with-lease|-f( |$))' <<<"$t" \
-    && frenar "es un push forzado: pisa lo que ya está en el remoto y puede borrar trabajo de otros."
-  grep -qiE 'git +push[^|;&]*:( *[a-z]|$)|git +push[^|;&]* --delete' <<<"$t" \
-    && frenar "borra una rama del remoto."
-  grep -qiE 'git +push[^|;&]* (origin +)?\+' <<<"$t" \
-    && frenar "es un push forzado (con +rama), pisa el remoto."
-
-  # ── Borrar archivos en masa ───────────────────────────────────────────────
-  if grep -qE 'rm +(-[a-zA-Z]* )*-[a-zA-Z]*[rR][a-zA-Z]*f|rm +(-[a-zA-Z]* )*-[a-zA-Z]*f[a-zA-Z]*[rR]' <<<"$t"; then
-    grep -qE 'rm .*(/ |/$|~/? |\$HOME/? |\*)' <<<"$t" \
-      && frenar "borra en masa (rm -rf con comodín, el home o la raíz)."
-  fi
-
-  # ── Bases de datos: borrar o vaciar ───────────────────────────────────────
-  case "$jefe" in git|echo|printf|cat|grep|jq) ;; *)   # texto, no SQL de verdad
-    grep -qiE '(drop +(table|database|schema)|truncate +table|delete +from [a-z_.]+ *(;|$))' <<<"$t" \
-    && frenar "borra o vacía datos de una base."
-  grep -qiE 'supabase +db +(reset|remote +reset)|supabase +projects +delete' <<<"$t" \
-    && frenar "resetea o borra un proyecto de Supabase."
-  grep -qiE '\bdropdb\b|pg_restore +.*--clean' <<<"$t" \
-    && frenar "borra una base de datos." ;; esac
-
-  # ── Producción: variables, servicios, infraestructura ─────────────────────
-  grep -qiE 'railway +(variables +(--set|set)|down|delete|service +delete|volume +delete)' <<<"$t" \
-    && frenar "toca producción en Railway (variables, borrar servicio o volumen)."
-  grep -qiE 'gh +repo +delete|gh +release +delete|gh +secret +(set|delete)' <<<"$t" \
-    && frenar "borra o cambia algo del repositorio en GitHub."
-  grep -qiE 'wrangler +(delete|pages +project +delete)|vercel +remove|fly +apps +destroy' <<<"$t" \
-    && frenar "borra un despliegue."
-
-  # ── Credenciales ──────────────────────────────────────────────────────────
-  grep -qiE 'security +(delete-|dump-)|rm +.*\.ssh/|rm +.*\.config/claude-gadgets/token|claude +setup-token' <<<"$t" \
-    && frenar "toca credenciales (llavero, claves SSH o el token)."
+  case "$jefe" in
+    git)
+      grep -qiE 'git +push.*(--force([^-]|$)|--force-with-lease|-f( |$))' <<<"$t" \
+        && frenar "es un push forzado: pisa lo que ya está en el remoto y puede borrar trabajo de otros."
+      grep -qiE 'git +push[^|;&]*:( *[a-z]|$)|git +push[^|;&]* --delete' <<<"$t" \
+        && frenar "borra una rama del remoto."
+      grep -qiE 'git +push[^|;&]* (origin +)?\+' <<<"$t" \
+        && frenar "es un push forzado (con +rama), pisa el remoto."
+      ;;
+    rm)
+      if grep -qE '^rm +(-[a-zA-Z]* )*-[a-zA-Z]*([rR][a-zA-Z]*f|f[a-zA-Z]*[rR])' <<<"$t"; then
+        grep -qE 'rm .*(/ |/$|~/? |\$HOME/? |\*)' <<<"$t" \
+          && frenar "borra en masa (rm -rf con comodín, el home o la raíz)."
+      fi
+      grep -qiE '^rm +.*(\.ssh/|claude-gadgets/token)' <<<"$t" \
+        && frenar "borra credenciales (claves SSH o el token de Claude)."
+      ;;
+    psql|mysql|sqlite3|dropdb|pg_restore|pgcli|mongo|redis-cli)
+      [ "$jefe" = dropdb ] && frenar "borra una base de datos entera."
+      grep -qiE 'drop +(table|database|schema)|truncate +table|delete +from [a-z_.]+ *(;|.$)' <<<"$t" \
+        && frenar "borra o vacía datos de una base."
+      grep -qiE 'pg_restore.*--clean' <<<"$t" && frenar "restaura pisando la base existente."
+      ;;
+    supabase)
+      grep -qiE 'db +(reset|remote +reset)|projects +delete|branches +delete' <<<"$t" \
+        && frenar "resetea o borra algo de Supabase."
+      ;;
+    railway)
+      grep -qiE '(variables +(--set|set)|down|delete|service +delete|volume +delete)' <<<"$t" \
+        && frenar "toca producción en Railway (variables, borrar servicio o volumen)."
+      ;;
+    gh)
+      grep -qiE 'repo +delete|release +delete|secret +(set|delete)|api +.*-X *(DELETE|PUT)' <<<"$t" \
+        && frenar "borra o cambia algo del repositorio en GitHub."
+      ;;
+    wrangler|vercel|fly|flyctl|heroku|aws|gcloud)
+      grep -qiE '(delete|destroy|remove|rm) ' <<<"$t" \
+        && frenar "borra infraestructura o un despliegue."
+      ;;
+    security)
+      grep -qiE '^security +(delete-|dump-)' <<<"$t" \
+        && frenar "toca el llavero de macOS."
+      ;;
+    claude)
+      grep -qiE '^claude +setup-token' <<<"$t" \
+        && frenar "genera un token nuevo: eso lo tiene que hacer el usuario, en su terminal."
+      ;;
+    launchctl)
+      grep -qiE 'bootout +system|disable +system' <<<"$t" && frenar "apaga servicios del sistema."
+      ;;
+  esac
 }
 
 while IFS= read -r tramo; do
   tramo=$(sed -E 's/^ +| +$//g' <<<"$tramo")
+  # El "cd algo && …" se mira por lo que viene después del cd.
+  tramo=$(sed -E 's/^cd +[^ ]+ +//' <<<"$tramo")
   [ -n "$tramo" ] && revisar_tramo "$tramo"
 done < <(sed -E 's/&&|\|\||;|\|/\n/g' <<<"$plano")
 

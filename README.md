@@ -111,5 +111,6 @@ bin/claude-buzon              carpeta mágica en iCloud Drive (launchd)
 bin/claude-estado             estado de todo en una pantalla
 finder/Preguntarle a Claude.workflow
 config/                       ejemplo de config, hooks, permisos
+pruebas/probar_freno.sh       24 casos: lo que el freno frena y lo que deja pasar
 docs/SIRI.md                  paso a paso del Atajo del iPhone
 ```

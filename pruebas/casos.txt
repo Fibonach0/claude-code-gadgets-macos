@@ -1,0 +1,24 @@
+MAL|git push --force origin main
+MAL|git push -f origin main
+MAL|rm -rf ~/proyectos/*
+MAL|psql -c 'DROP TABLE ypf_precios'
+MAL|railway variables --set A=1
+MAL|supabase db reset
+MAL|gh repo delete x/y
+MAL|rm ~/.ssh/authorized_keys
+MAL|dropdb midb
+MAL|git push origin :rama
+MAL|echo hola | psql -c 'truncate table x'
+MAL|cd /tmp/x && git push --force-with-lease
+BIEN|git commit -m 'drop table en el texto'
+BIEN|git push origin rama-nueva
+BIEN|rm -rf node_modules
+BIEN|psql -c 'select 1'
+BIEN|railway logs
+BIEN|npm test
+BIEN|gh pr list
+BIEN|echo 'supabase db reset es peligroso' >> notas.md
+BIEN|cat README.md | grep 'railway variables --set'
+BIEN|git log --oneline -5
+BIEN|python3 script.py --texto 'rm -rf con comodin'
+BIEN|rm archivo.txt
