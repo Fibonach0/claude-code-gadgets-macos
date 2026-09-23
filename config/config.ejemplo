@@ -48,3 +48,12 @@
 # PENDIENTES="$HOME/Documents/Pendientes.md"
 # ANOTAR_CLASIFICA=1
 # ANOTAR_PISTAS="el hub es tal repo; el bot de WhatsApp es tal otro"
+
+# ── Parte hablado de la mañana ───────────────────────────────────────────────
+# BRIEF_HORA=7
+# BRIEF_AGENDA=1
+# BRIEF_VOZ="Paulina"
+
+# ── Freno de mano: excepciones ───────────────────────────────────────────────
+# Las que aprobaste con `claude-permitir --siempre` viven en
+# ~/.config/claude-gadgets/freno-excepciones (una expresión por línea).

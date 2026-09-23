@@ -17,7 +17,8 @@ Se instalan con un comando y se desinstalan con otro.
 | **Guardián de jobs** | `claude-jobs`: revisa en los logs si los trabajos programados de tu servidor corrieron a la hora que tenían, y avisa sólo si falta alguno. |
 | **Build de prueba** | `claude-prebuild`: compila el front en un volumen sensible a mayúsculas (como Linux) y caza los imports que en la Mac pasan. Un hook lo exige antes de mergear un PR que toca el front. |
 | **Anotar por voz** | `claude-anotar "…"`: guarda un pendiente con fecha y proyecto (lo clasifica solo). Va bien como Atajo del iPhone. |
-| **Autorizar desde el celular** | `claude-permitir`: deja pasar, una vez y por 10 minutos, el último comando que frenó el freno de mano. |
+| **Autorizar desde el celular** | `claude-permitir`: deja pasar, una vez y por 10 minutos, el último comando que frenó el freno de mano. Y **aprende**: a la tercera vez te ofrece dejarlo fijo (`--siempre`), así el freno queda para lo raro. |
+| **Parte de la mañana** | `claude-brief`: cuatro o cinco frases habladas — cupo, qué se rompió mientras dormías, pendientes y agenda. Se cocina temprano en la Mac y el iPhone sólo lo lee. |
 | **Permisos** (opcional) | Deja correr sin preguntar comandos de sólo lectura (`git status/log/diff`, `ls`, `gh pr view`, `railway logs`…). |
 
 ## Instalar
@@ -92,6 +93,11 @@ PREBUILD_PATRON="^front/"                    # qué rutas del PR lo exigen
 # Pendientes dictados
 PENDIENTES="$HOME/Documents/Pendientes.md"
 ANOTAR_PISTAS="el hub es tal repo; el bot es tal otro"
+
+# Parte hablado de la mañana
+BRIEF_HORA=7          # se arma 7:30
+BRIEF_AGENDA=1        # incluye la agenda (conector de Google Calendar)
+BRIEF_VOZ="Paulina"   # voz de macOS para --decir
 ```
 
 Los que corren solos, una vez cada uno:
@@ -100,6 +106,7 @@ Los que corren solos, una vez cada uno:
 claude-guardia --instalar    # deploys, cada 2 minutos
 claude-buzon --instalar      # la carpeta mágica
 claude-jobs --instalar       # los trabajos programados, una vez por día
+claude-brief --instalar      # el parte hablado, temprano
 ```
 
 > `NTFY_TOPIC` manda los avisos a ntfy.sh, un servicio público: cualquiera que
@@ -131,7 +138,8 @@ bin/claude-estado             estado de todo en una pantalla
 bin/claude-jobs               ¿corrieron los trabajos programados?
 bin/claude-prebuild           build en volumen sensible a mayúsculas
 bin/claude-anotar             pendientes dictados
-bin/claude-permitir           autoriza el último comando frenado
+bin/claude-permitir           autoriza el último comando frenado (y aprende)
+bin/claude-brief              el parte de la mañana, para escuchar
 finder/Preguntarle a Claude.workflow
 config/                       ejemplo de config, hooks, permisos
 pruebas/                      24 casos del freno, el circuito de autorización

@@ -1,0 +1,100 @@
+#!/bin/bash
+# El parte de la mañana, en voz alta. Cuatro o cinco frases: cómo venís de cupo,
+# si algo se rompió mientras no estabas, qué tenés anotado y qué hay en la agenda.
+#
+#   claude-brief            lo dice (texto listo para que Siri lo lea)
+#   claude-brief --decir    lo lee la Mac en voz alta
+#   claude-brief --generar  lo arma de nuevo (esto es lo que corre solo, temprano)
+#   claude-brief --instalar / --desinstalar
+#
+# POR QUÉ SE ARMA ANTES Y NO AL PEDIRLO: el Atajo del iPhone entra por SSH, y por
+# SSH Claude Code no tiene los conectores (agenda, Railway). Así que el parte se
+# cocina en la Mac con tu sesión normal y queda escrito; el teléfono sólo lo lee,
+# y contesta al toque en vez de esperar veinte segundos.
+#
+# Config en ~/.config/claude-gadgets/config:
+#   BRIEF_HORA=7          # a qué hora se arma
+#   BRIEF_AGENDA=1        # 1 = incluye la agenda del día (conector de Calendar)
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+est=~/.claude/estado; mkdir -p "$est"
+parte="$est/brief.txt"
+plist=~/Library/LaunchAgents/com.claude-gadgets.brief.plist
+
+case "${1:-}" in
+  --instalar)
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.brief</string>
+  <key>ProgramArguments</key><array>
+    <string>$HOME/.claude/gadgets/bin/claude-brief</string><string>--generar</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${BRIEF_HORA:-7}</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/brief.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+      && echo "✓ El parte se arma todos los días a las ${BRIEF_HORA:-7}:30"; exit 0 ;;
+  --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Parte de la mañana apagado"; exit 0 ;;
+esac
+
+if [ "${1:-}" != --generar ]; then
+  # Sólo leer lo cocinado. Si es de otro día, se avisa en vez de mentir.
+  if [ -f "$parte" ]; then
+    dia=$(date -r "$parte" +%F)
+    texto=$(cat "$parte")
+    [ "$dia" != "$(date +%F)" ] && texto="Ojo, este parte es de $(date -r "$parte" '+%d/%m'). $texto"
+  else
+    texto="Todavía no armé el parte de hoy. Corré claude-brief --generar en la Mac."
+  fi
+  [ "${1:-}" = --decir ] && { say -v "${BRIEF_VOZ:-Paulina}" "$texto"; exit 0; }
+  printf '%s\n' "$texto"; exit 0
+fi
+
+# ── Armar el parte ───────────────────────────────────────────────────────────
+datos=""
+
+# Cupo de Claude (lo deja la statusline)
+if [ -f "$est/uso.json" ]; then
+  p5=$(jq -r '.rate_limits.five_hour.used_percentage // empty' "$est/uso.json")
+  p7=$(jq -r '.rate_limits.seven_day.used_percentage // empty' "$est/uso.json")
+  [ -n "$p5$p7" ] && datos+="Cupo de Claude: sesión $(printf '%.0f' "${p5:-0}") por ciento, semana $(printf '%.0f' "${p7:-0}") por ciento."$'\n'
+fi
+
+# Lo que pasó mientras no estabas (últimas 16 horas de los guardianes)
+desde=$(date -v-16H '+%s' 2>/dev/null || echo 0)
+for f in "$est/guardia.log" "$est/jobs.log" "$est/buzon.log"; do
+  [ -f "$f" ] || continue
+  [ "$(stat -f %m "$f")" -ge "$desde" ] && datos+="$(basename "$f" .log): $(tail -3 "$f")"$'\n'
+done
+
+# Servicios y repos (lo que ya sabe claude-estado)
+command -v claude-estado >/dev/null && datos+="$(claude-estado 2>/dev/null | head -25)"$'\n'
+
+# Pendientes anotados sin terminar
+arch="${PENDIENTES:-$HOME/Documents/Pendientes.md}"
+[ -f "$arch" ] && datos+="Pendientes abiertos: $(grep -c '^- \[ \]' "$arch") en total. Últimos: $(grep '^- \[ \]' "$arch" | tail -4 | sed 's/^- \[ \] //' | tr '\n' ';')"$'\n'
+
+agenda=""
+[ "${BRIEF_AGENDA:-1}" = 1 ] && agenda="Mirá también mi agenda de hoy con el conector de Google Calendar y contame en una frase qué tengo (si no hay nada, decilo)."
+
+texto=$(claude -p "Con estos datos armá mi parte de la mañana, para que me lo lea el teléfono en voz alta.
+
+$datos
+
+$agenda
+
+Reglas: contestá SÓLO el parte, sin preámbulo ni «ahora te armo»: tu primera palabra ya es la primera palabra que se escucha. Castellano rioplatense, 4 a 6 frases cortas, seguidas, sin viñetas ni markdown ni números de versión. Arrancá por lo que está mal o pendiente, después lo que está bien en una sola frase. Nada de rutas de archivos, hashes ni nombres de variables. Si todo está en orden, decilo y no lo estires." \
+  --no-session-persistence --model sonnet --permission-mode dontAsk \
+  --allowedTools "mcp__claude_ai_Google_Calendar__list_events" "mcp__claude_ai_Google_Calendar__list_calendars" \
+  </dev/null 2>&1)
+
+if [ -z "$texto" ] || grep -qiE "^(error|no pude)" <<<"$texto"; then
+  echo "No pude armar el parte: $texto" >> "$est/brief.err"; exit 1
+fi
+printf '%s\n' "$texto" > "$parte"
+printf '%s\n' "$texto"

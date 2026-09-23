@@ -1,31 +1,90 @@
 #!/bin/bash
-# Autoriza, por una vez y por 10 minutos, el último comando que frenó el freno
-# de mano. Pensado para un Atajo del iPhone (SSH), así podés destrabar a Claude
-# sin ir hasta la compu.
+# Autoriza el último comando que frenó el freno de mano, y se acuerda.
 #
-#   claude-permitir            autoriza el último comando frenado
-#   claude-permitir --ver      muestra cuál fue, sin autorizar nada
-#   claude-permitir --cancelar anula una autorización que diste recién
+#   claude-permitir             lo deja pasar una vez, por 10 minutos
+#   claude-permitir --siempre   lo convierte en excepción fija (no vuelve a preguntar)
+#   claude-permitir --ver       qué se frenó, sin autorizar nada
+#   claude-permitir --cancelar  anula una autorización que diste recién
+#   claude-permitir --lista     las excepciones fijas que hay
+#   claude-permitir --olvidar N borra la excepción número N
 #
-# Seguridad: sólo vale para ESE comando exacto (se guarda su huella), una sola
-# vez, y se vence a los 10 minutos. No abre el freno para nada más.
+# Pensado para un Atajo del iPhone (SSH), así destrabás a Claude sin ir a la compu.
+#
+# Por qué se acuerda: un freno que pregunta siempre lo mismo se termina apagando
+# entero, y ahí deja de proteger de lo que importa. Cuando autorizás tres veces
+# la misma cosa, te ofrece dejarla fija — y el freno se queda para lo raro.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG=${LANG:-es_AR.UTF-8}
 est=~/.claude/estado
 ultimo="$est/freno-ultimo.json"; permiso="$est/freno-permiso"
+memoria="$est/freno-memoria.json"
+excepciones=~/.config/claude-gadgets/freno-excepciones
 minutos=${FRENO_MINUTOS:-10}
+mkdir -p "$est" "$(dirname "$excepciones")"
+[ -f "$memoria" ] || echo '{}' > "$memoria"
+
+# El patrón que generaliza un comando: las primeras palabras "de mando", sin los
+# valores. `railway variables --set FOO=bar` → `^railway +variables +--set`.
+# Conservador a propósito: mejor una excepción angosta y repetir, que una ancha
+# que deje pasar algo que no querías.
+patron_de() {
+  # Cada palabra se escapa por separado y recién después se unen con " +":
+  # escapar el resultado entero convertía mi propio "+" en un más literal y la
+  # excepción no volvía a matchear nunca (pasó, y el test 3 lo fija).
+  awk '{
+    n = 0
+    for (i = 1; i <= NF && n < 3; i++) {
+      if ($i ~ /=/ || $i == "sudo" || $i == "env") continue
+      if ($i ~ /^-/ && n == 0) continue
+      t = $i
+      gsub(/[][(){}.*?+|^$\\]/, "\\\\&", t)
+      p[++n] = t
+      if ($i ~ /^-/) break
+    }
+    out = ""
+    for (j = 1; j <= n; j++) out = out (j > 1 ? " +" : "") p[j]
+    print "^" out
+  }' <<<"$1"
+}
+
+listar() {
+  [ -s "$excepciones" ] || { echo "No hay excepciones fijas."; return; }
+  grep -vE '^\s*(#|$)' "$excepciones" | nl -w2 -s'. '
+}
+
+case "${1:-}" in
+  --lista) listar; exit 0 ;;
+  --olvidar)
+    n=${2:-0}; [ "$n" -gt 0 ] 2>/dev/null || { echo "Decime qué número borrar (claude-permitir --lista)"; exit 1; }
+    linea=$(grep -vE '^\s*(#|$)' "$excepciones" | sed -n "${n}p")
+    [ -z "$linea" ] && { echo "No existe la excepción $n."; exit 1; }
+    grep -vxF "$linea" "$excepciones" > "$excepciones.tmp" && mv "$excepciones.tmp" "$excepciones"
+    echo "✓ Borrada: $linea"; exit 0 ;;
+  --cancelar) rm -f "$permiso"; echo "Autorización anulada."; exit 0 ;;
+esac
 
 [ -f "$ultimo" ] || { echo "No hay ningún comando frenado."; exit 1; }
 cmd=$(jq -r .comando "$ultimo"); motivo=$(jq -r .motivo "$ultimo")
 sha=$(jq -r .sha "$ultimo");     ts=$(jq -r .ts "$ultimo")
 edad=$(( ($(date +%s) - ts) / 60 ))
+patron=$(patron_de "$cmd")
 
-case "${1:-}" in
-  --ver)
-    echo "Frenado hace ${edad}m: $motivo"; echo "$cmd"; exit 0 ;;
-  --cancelar)
-    rm -f "$permiso"; echo "Autorización anulada."; exit 0 ;;
-esac
+[ "${1:-}" = --ver ] && { echo "Frenado hace ${edad}m: $motivo"; echo "$cmd"; echo "Patrón: $patron"; exit 0; }
+
+if [ "${1:-}" = --siempre ]; then
+  if grep -qxF "$patron" "$excepciones" 2>/dev/null; then
+    echo "Ya estaba como excepción fija: $patron"
+  else
+    { [ -s "$excepciones" ] || echo "# Excepciones del freno de mano: patrones que ya aprobaste."
+      printf '# %s · ejemplo: %s\n%s\n' "$(date '+%d/%m/%Y')" "$(cut -c1-70 <<<"$cmd")" "$patron"
+    } >> "$excepciones"
+    chmod 600 "$excepciones"
+    echo "✓ Excepción fija: $patron"
+    echo "  (el freno ya no va a preguntar por esto; se saca con claude-permitir --olvidar)"
+  fi
+  rm -f "$permiso"
+  exit 0
+fi
 
 if [ "$edad" -gt 60 ]; then
   echo "El último frenado fue hace ${edad} minutos, ya es viejo. Pedíselo de nuevo a Claude y volvé a autorizar."
@@ -34,7 +93,21 @@ fi
 
 printf '%s\n%s\n' "$sha" "$(( $(date +%s) + minutos * 60 ))" > "$permiso"
 chmod 600 "$permiso"
+
+# Memoria: cuántas veces autorizaste este mismo patrón.
+tmp=$(mktemp)
+jq --arg p "$patron" --arg c "$cmd" \
+   '.[$p] = {veces: ((.[$p].veces // 0) + 1), ultimo: $c, ts: (now|floor)}' "$memoria" > "$tmp" && mv "$tmp" "$memoria"
+veces=$(jq -r --arg p "$patron" '.[$p].veces' "$memoria")
+
 echo "Autorizado por $minutos minutos, una sola vez:"
 echo "$cmd"
 echo "(era: $motivo)"
-osascript -e "display notification \"${cmd:0:80}\" with title \"Comando autorizado\" sound name \"Pop\"" >/dev/null 2>&1 & disown
+aviso="Autorizado por $minutos min"
+if [ "$veces" -ge 3 ] && ! grep -qxF "$patron" "$excepciones" 2>/dev/null; then
+  echo
+  echo "Van $veces veces que autorizás esto mismo ($patron)."
+  echo "Si querés que deje de preguntar: claude-permitir --siempre"
+  aviso="Van $veces veces: podés fijarlo con --siempre"
+fi
+osascript -e "display notification \"${aviso}\" with title \"Comando autorizado\" sound name \"Pop\"" >/dev/null 2>&1 & disown

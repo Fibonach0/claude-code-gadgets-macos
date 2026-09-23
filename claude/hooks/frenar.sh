@@ -18,11 +18,36 @@ export LANG=${LANG:-es_AR.UTF-8}
 
 est=~/.claude/estado; mkdir -p "$est"
 permiso="$est/freno-permiso"; ultimo="$est/freno-ultimo.json"
+memoria="$est/freno-memoria.json"        # cuántas veces autorizaste cada cosa
+excepciones=~/.config/claude-gadgets/freno-excepciones
 
 entrada=$(cat)
 cmd=$(jq -r '.tool_input.command // empty' <<<"$entrada")
 [ -z "$cmd" ] && exit 0
 plano=$(tr '\n' ' ' <<<"$cmd")
+
+# ── LO QUE YA DIJISTE QUE SÍ ────────────────────────────────────────────────
+#
+# Un freno que pregunta siempre lo mismo se termina apagando entero, y ahí deja
+# de proteger de lo que importa. Por eso aprende: lo que autorizaste varias
+# veces se puede volver excepción fija, y el freno se queda para lo raro.
+#
+# Las excepciones son patrones que vos aprobaste a mano (claude-permitir
+# --siempre). Una línea por patrón, y las líneas con # son comentarios.
+exceptuado() {
+  [ -f "$excepciones" ] || return 1
+  local patron
+  while IFS= read -r patron; do
+    [ -z "$patron" ] && continue
+    case "$patron" in \#*) continue ;; esac
+    if grep -qiE -- "$patron" <<<"$plano"; then
+      printf '%s | excepción «%s» :: %s\n' "$(date '+%d/%m %H:%M')" "$patron" \
+        "$(cut -c1-100 <<<"$plano")" >> "$est/freno.log"
+      return 0
+    fi
+  done < "$excepciones"
+  return 1
+}
 
 # Si el usuario autorizó este comando desde el teléfono (claude-permitir),
 # pasa una sola vez y dentro de los 10 minutos.
@@ -36,6 +61,7 @@ autorizado() {
 }
 
 frenar() {  # motivo
+  exceptuado && exit 0
   autorizado && exit 0
   jq -n --arg r "$1" '{
     hookSpecificOutput: {
