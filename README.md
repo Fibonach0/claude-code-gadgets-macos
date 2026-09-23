@@ -83,6 +83,7 @@ CLAUDE_SIRI_EXTRA=("$HOME/otra-carpeta")     # carpetas extra que puede leer
 GUARDIA=("hub|$HOME/proyectos/hub|https://hub.ejemplo.com/|bundle"
          "bot|$HOME/proyectos/bot|https://bot.ejemplo.com/|salud")
 GUARDIA_ESPERA=15                            # minutos antes de dar el deploy por perdido
+GUARDIA_PATRON="^front/"                     # en modo bundle, qué rutas obligan a esperar
 
 BUZON="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude"
 NTFY_TOPIC=""                                # opcional: avisos al celular por ntfy.sh

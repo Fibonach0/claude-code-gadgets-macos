@@ -20,6 +20,7 @@
 # GUARDIA=("hub|$HOME/proyectos/hub|https://hub.ejemplo.com/|bundle"
 #          "bot|$HOME/proyectos/bot|https://bot.ejemplo.com/|salud")
 # GUARDIA_ESPERA=15
+# GUARDIA_PATRON='^front/'   # si el commit no toca esto, no espera cambio de bundle
 
 # ── Buzón (carpeta mágica) ───────────────────────────────────────────────────
 # BUZON="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude"

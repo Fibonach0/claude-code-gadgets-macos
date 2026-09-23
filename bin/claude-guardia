@@ -21,9 +21,11 @@
 #   GUARDIA_ESPERA=15     # minutos antes de dar el deploy por perdido
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG=${LANG:-es_AR.UTF-8}
-conf=~/.config/claude-gadgets/config
+# Las dos rutas son configurables por entorno para poder probar el guardián
+# sin tocar tu configuración ni tu estado reales (ver pruebas/).
+conf=${CLAUDE_GADGETS_CONF:-$HOME/.config/claude-gadgets/config}
 [ -f "$conf" ] && . "$conf"
-est=~/.claude/estado; mkdir -p "$est"
+est=${CLAUDE_ESTADO:-$HOME/.claude/estado}; mkdir -p "$est"
 estado="$est/guardia.json"; log="$est/guardia.log"
 plist=~/Library/LaunchAgents/com.claude-gadgets.guardia.plist
 espera=$((${GUARDIA_ESPERA:-15} * 60))
@@ -88,6 +90,18 @@ for fila in "${GUARDIA[@]}"; do
 
   visto=$(leer "$nombre" sha)
   if [ "$sha" != "$visto" ]; then
+    # En modo bundle, esperar un cambio que el commit no puede causar es una
+    # falsa alarma: si lo que se mergeó no toca el front, producción sigue igual
+    # con razón. (Pasó el 23/09 con dos PRs de SQL.)
+    if [ "$modo" = bundle ] && [ -n "$visto" ]; then
+      tocados=$(git -C "$repo" diff --name-only "$visto" "$sha" 2>/dev/null)
+      if [ -n "$tocados" ] && ! grep -qE "${GUARDIA_PATRON:-^front/}" <<<"$tocados"; then
+        guardar "$nombre" sha "$sha"
+        guardar "$nombre" antes "$(huella "$url" "$modo")"
+        guardar "$nombre" desde ""
+        continue
+      fi
+    fi
     guardar "$nombre" sha "$sha"
     guardar "$nombre" antes "$(huella "$url" "$modo")"
     guardar "$nombre" titulo "$(git -C "$repo" log -1 --format=%s "$sha" | cut -c1-70)"
