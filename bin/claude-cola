@@ -1,0 +1,118 @@
+#!/bin/bash
+# Cola de pedidos: dejás encargues (desde el iPhone, por SSH, o en la terminal)
+# y la Mac los va haciendo de a uno cuando está libre, y te avisa al terminar.
+#
+#   claude-cola "revisá por qué falla el test de urea"     encolar
+#   claude-cola --ver                                      qué hay en la cola
+#   claude-cola --hechos                                   los últimos terminados
+#   claude-cola --borrar 2                                 sacar uno
+#   claude-cola --correr                                   tomar el próximo (lo hace launchd)
+#   claude-cola --instalar / --desinstalar
+#
+# DOS MODOS, y el de fábrica es el prudente:
+#   seguro   (por defecto) Claude sólo LEE y te deja escrito qué haría.
+#   trabajar (COLA_MODO=trabajar) además edita archivos y corre comandos, con el
+#            freno de mano puesto. Nunca hace push ni toca producción.
+#
+# Config en ~/.config/claude-gadgets/config:
+#   COLA_DIR="$HOME/proyectos"    # dónde trabaja si el pedido no dice
+#   COLA_MODO=seguro
+#   COLA_MODELO=sonnet
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+tok=~/.config/claude-gadgets/token
+[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$tok")"
+est=~/.claude/estado; mkdir -p "$est"
+cola="$est/cola.jsonl"; hechos="$est/cola-hechos.jsonl"; lock="$est/cola.lock"
+salidas="$est/cola"; mkdir -p "$salidas"
+plist=~/Library/LaunchAgents/com.claude-gadgets.cola.plist
+touch "$cola"
+
+avisar() { local t=${1//\"/\'} m=${2//\"/\'}
+  osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Glass}\"" >/dev/null 2>&1 & disown
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: $1" -d "$2" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null & }
+
+case "${1:-}" in
+  --ver)
+    n=$(grep -c . "$cola" 2>/dev/null); n=${n:-0}   # grep sale 1 cuando no hay nada
+    [ "$n" = 0 ] && { echo "La cola está vacía."; exit 0; }
+    echo "$n pedido(s) esperando:"
+    nl -w2 -s'. ' < "$cola" | while IFS= read -r l; do
+      num=${l%%.*}; json=${l#*. }
+      printf '  %s %s  (%s)\n' "$num." "$(jq -r .texto <<<"$json" | cut -c1-70)" "$(jq -r .cuando <<<"$json")"
+    done; exit 0 ;;
+  --hechos)
+    [ -s "$hechos" ] || { echo "Todavía no terminé ninguno."; exit 0; }
+    tail -8 "$hechos" | jq -r '"\(.cuando) · \(.estado) · \(.texto[0:60])\n     \(.salida)"'; exit 0 ;;
+  --borrar)
+    n=${2:-0}; [ "$n" -gt 0 ] 2>/dev/null || { echo "Decime qué número (claude-cola --ver)"; exit 1; }
+    sed -i '' "${n}d" "$cola" && echo "✓ Borrado el $n"; exit 0 ;;
+  --instalar)
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.cola</string>
+  <key>ProgramArguments</key><array>
+    <string>$HOME/.claude/gadgets/bin/claude-cola</string><string>--correr</string></array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/cola.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+      && echo "✓ Tomo un pedido cada 5 minutos (modo ${COLA_MODO:-seguro})"; exit 0 ;;
+  --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Cola apagada"; exit 0 ;;
+esac
+
+# ── Tomar el próximo ─────────────────────────────────────────────────────────
+if [ "${1:-}" = --correr ]; then
+  [ -s "$cola" ] || exit 0
+  # Un solo pedido a la vez: si el anterior sigue corriendo, este turno pasa.
+  exec 9>"$lock"; flock -n 9 2>/dev/null || { command -v flock >/dev/null || true; }
+  if ! mkdir "$lock.d" 2>/dev/null; then exit 0; fi
+  trap 'rmdir "$lock.d" 2>/dev/null' EXIT
+
+  linea=$(head -1 "$cola"); sed -i '' '1d' "$cola"
+  texto=$(jq -r .texto <<<"$linea"); dir=$(jq -r '.dir // empty' <<<"$linea")
+  dir=${dir:-${COLA_DIR:-$HOME/proyectos}}; [ -d "$dir" ] || dir=$HOME
+  archivo="$salidas/$(date +%Y%m%d-%H%M%S).md"
+  avisar "Cola" "Empecé: $(cut -c1-60 <<<"$texto")"
+
+  if [ "${COLA_MODO:-seguro}" = trabajar ]; then
+    herramientas=(--allowedTools "Read" "Grep" "Glob" "Edit" "Write" "Bash" "WebSearch" "WebFetch")
+    encabezado="Hacelo de verdad: podés editar archivos y correr comandos. NO hagas push, ni merges, ni toques producción."
+  else
+    herramientas=(--allowedTools "Read" "Grep" "Glob" "WebSearch" "WebFetch")
+    encabezado="Trabajá en modo LECTURA: no edites nada. Investigá y dejá escrito qué harías, con los archivos y líneas concretas."
+  fi
+
+  {
+    echo "# $texto"; echo; echo "_$(date '+%d/%m/%Y %H:%M') · carpeta $dir · modo ${COLA_MODO:-seguro}_"; echo
+    cd "$dir" && claude -p "$encabezado
+
+Pedido: $texto
+
+Terminá con un resumen de tres líneas: qué hiciste, qué te falta y qué tendría que revisar yo." \
+      --no-session-persistence --model "${COLA_MODELO:-sonnet}" --permission-mode dontAsk \
+      "${herramientas[@]}" </dev/null 2>&1
+  } > "$archivo"
+  rc=$?
+  jq -n --arg t "$texto" --arg c "$(date '+%d/%m %H:%M')" --arg s "$archivo" \
+     --arg e "$([ $rc = 0 ] && echo ok || echo falló)" \
+     '{texto:$t, cuando:$c, salida:$s, estado:$e}' >> "$hechos"
+  avisar "Cola: listo" "$(cut -c1-40 <<<"$texto") → $(basename "$archivo")" Hero
+  echo "$archivo"
+  exit 0
+fi
+
+# ── Encolar ──────────────────────────────────────────────────────────────────
+texto="$*"
+[ -z "$texto" ] && texto=$(cat)
+texto=$(sed -E 's/^ +| +$//g' <<<"$texto")
+[ -z "$texto" ] && { echo "Decime qué encargar."; exit 1; }
+jq -nc --arg t "$texto" --arg c "$(date '+%d/%m %H:%M')" --arg d "${COLA_DIR:-}" \
+   '{texto:$t, cuando:$c, dir:$d}' >> "$cola"
+n=$(grep -c . "$cola"); echo "Encolado ($n en la cola): $texto"

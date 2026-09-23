@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Panel de uso: una página local con tu semana de trabajo con Claude Code.
+
+    claude-panel                 últimos 21 días y la abre en el navegador
+    claude-panel --dias 60
+    claude-panel --no-abrir      sólo escribe el archivo
+
+La página queda en ~/.claude/estado/panel.html, es un archivo suelto (no hay
+servidor, no sale nada a internet) y se puede volver a generar cuando quieras.
+Los datos salen de tus propias sesiones, con tx.py.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import html
+import pathlib
+import subprocess
+import sys
+import webbrowser
+from collections import defaultdict
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import tx  # noqa: E402
+
+SALIDA = pathlib.Path.home() / ".claude" / "estado" / "panel.html"
+# Paleta categórica de la guía de visualización, validada con su script en los
+# dos modos (claro: aviso de contraste → por eso van etiquetas visibles y tabla).
+SERIES_CLARO = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#8a8a85"]
+SERIES_OSCURO = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9a9a94"]
+TOPE_SERIES = 5          # más que esto se pliega a "Otros"
+
+
+def hm(minutos: float) -> str:
+    h, m = divmod(int(round(minutos)), 60)
+    return "%dh %02dm" % (h, m) if h else "%dm" % m
+
+
+def juntar(dias: int):
+    desde = (dt.datetime.now().astimezone() - dt.timedelta(days=dias)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    por_dia = defaultdict(lambda: defaultdict(lambda: {"min": 0.0, "usd": 0.0, "pr": 0}))
+    totales = defaultdict(lambda: {"min": 0.0, "usd": 0.0, "pr": 0, "ses": 0})
+    for s in tx.sesiones(desde):
+        d = por_dia[s["dia"]][s["proyecto"]]
+        d["min"] += s["minutos"]; d["usd"] += s["costo"]; d["pr"] += s["prompts"]
+        t = totales[s["proyecto"]]
+        t["min"] += s["minutos"]; t["usd"] += s["costo"]
+        t["pr"] += s["prompts"]; t["ses"] += 1
+    return por_dia, totales
+
+
+def barra_apilada(por_dia, orden, colores, alto=170):
+    """Un día = una columna; cada proyecto, un tramo. 2px de aire entre tramos."""
+    dias = sorted(por_dia)
+    maximo = max((sum(v["min"] for v in por_dia[d].values()) for d in dias), default=1) or 1
+    cols = []
+    for d in dias:
+        total = sum(v["min"] for v in por_dia[d].values())
+        tramos = []
+        for i, proy in enumerate(orden):
+            v = por_dia[d].get(proy)
+            if not v or v["min"] <= 0:
+                continue
+            px = max(3, v["min"] / maximo * alto)
+            tramos.append(
+                '<div class="tramo" style="height:%.1fpx;background:%s" '
+                'data-t="%s · %s · %s · %d pedidos"></div>'
+                % (px, colores[i], html.escape(d), html.escape(proy), hm(v["min"]), v["pr"]))
+        etiqueta = hm(total) if total >= 30 else ""
+        cols.append(
+            '<div class="col"><div class="valor">%s</div><div class="pila">%s</div>'
+            '<div class="eje">%s</div></div>'
+            % (etiqueta, "".join(reversed(tramos)), d[8:10] + "/" + d[5:7]))
+    return '<div class="barras" style="--alto:%dpx">%s</div>' % (alto, "".join(cols))
+
+
+def barras_proyecto(totales, orden, colores):
+    maximo = max((t["min"] for t in totales.values()), default=1) or 1
+    filas = []
+    for i, proy in enumerate(orden):
+        t = totales.get(proy)
+        if not t:
+            continue
+        filas.append(
+            '<div class="fila"><div class="nombre">%s</div>'
+            '<div class="pista"><div class="marca" style="width:%.1f%%;background:%s" '
+            'data-t="%s · %s · %d sesiones · %d pedidos"></div></div>'
+            '<div class="cifra">%s</div></div>'
+            % (html.escape(proy), t["min"] / maximo * 100, colores[i],
+               html.escape(proy), hm(t["min"]), t["ses"], t["pr"], hm(t["min"])))
+    return '<div class="filas">%s</div>' % "".join(filas)
+
+
+def tabla(por_dia, orden):
+    cab = "".join("<th>%s</th>" % html.escape(p) for p in orden)
+    filas = []
+    for d in sorted(por_dia, reverse=True):
+        celdas = "".join(
+            "<td>%s</td>" % (hm(por_dia[d][p]["min"]) if p in por_dia[d] else "·")
+            for p in orden)
+        filas.append("<tr><th scope=\"row\">%s</th>%s</tr>" % (d, celdas))
+    return ("<table><caption>Minutos por día y proyecto</caption><thead><tr>"
+            "<th scope=\"col\">Día</th>%s</tr></thead><tbody>%s</tbody></table>"
+            % (cab, "".join(filas)))
+
+
+PAGINA = """<!doctype html>
+<html lang="es-AR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mi uso de Claude Code</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:#fcfcfb; --surface-2:#f4f3f0; --linea:#e3e1db;
+    --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#78766f;
+    %(claro)s
+  }
+  @media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1:#1a1a19; --surface-2:#232321; --linea:#34332f;
+    --text-primary:#fff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+    %(oscuro)s
+  }}
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:#1a1a19; --surface-2:#232321; --linea:#34332f;
+    --text-primary:#fff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+    %(oscuro)s
+  }
+  * { box-sizing:border-box }
+  body { margin:0; padding:32px 16px 64px; background:var(--surface-1);
+         color:var(--text-primary); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+  main { max-width:960px; margin:0 auto }
+  h1 { font-size:22px; margin:0 0 4px } h2 { font-size:15px; margin:36px 0 12px }
+  .sub { color:var(--text-secondary); margin:0 0 28px; font-size:13px }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px }
+  .tile { background:var(--surface-2); border:1px solid var(--linea); border-radius:10px; padding:14px 16px }
+  .tile .n { font-size:26px; font-weight:600; letter-spacing:-.02em }
+  .tile .l { color:var(--text-secondary); font-size:12px; margin-top:2px }
+  .barras { display:flex; gap:6px; align-items:flex-end; overflow-x:auto; padding-top:18px;
+            justify-content:flex-start }
+  .col { display:flex; flex-direction:column; align-items:center; gap:4px;
+         flex:0 0 auto; width:44px }   /* ancho fijo: con pocos días, columnas gigantes */
+  .pila { display:flex; flex-direction:column; justify-content:flex-end; gap:2px; height:var(--alto);
+          width:100%%; border-radius:4px 4px 0 0; overflow:hidden }
+  .tramo { border-radius:3px; cursor:default }
+  .tramo:first-child { border-radius:4px 4px 3px 3px }
+  .valor { font-size:10px; color:var(--text-muted); height:12px }
+  .eje { font-size:10px; color:var(--text-muted) }
+  .filas { display:flex; flex-direction:column; gap:8px }
+  .fila { display:grid; grid-template-columns:150px 1fr 70px; gap:10px; align-items:center }
+  .nombre { font-size:13px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .pista { background:var(--surface-2); border-radius:4px; height:16px }
+  .marca { height:16px; border-radius:4px; min-width:4px }
+  .cifra { font-size:13px; text-align:right; color:var(--text-primary); font-variant-numeric:tabular-nums }
+  .leyenda { display:flex; flex-wrap:wrap; gap:14px; margin:14px 0 0; font-size:12px; color:var(--text-secondary) }
+  .leyenda span { display:inline-flex; align-items:center; gap:6px }
+  .punto { width:10px; height:10px; border-radius:3px; display:inline-block }
+  table { border-collapse:collapse; width:100%%; font-size:12px; margin-top:8px }
+  caption { text-align:left; color:var(--text-secondary); padding-bottom:6px; font-size:12px }
+  th,td { border-bottom:1px solid var(--linea); padding:6px 8px; text-align:right }
+  th[scope=row] { text-align:left; font-weight:500 }
+  thead th { color:var(--text-secondary); font-weight:500 }
+  details { margin-top:10px } summary { cursor:pointer; color:var(--text-secondary); font-size:13px }
+  #tip { position:fixed; pointer-events:none; opacity:0; transition:opacity .1s;
+         background:var(--text-primary); color:var(--surface-1); padding:6px 9px;
+         border-radius:6px; font-size:12px; white-space:nowrap; z-index:9 }
+  footer { margin-top:40px; color:var(--text-muted); font-size:12px }
+</style></head>
+<body><main>
+<h1>Mi uso de Claude Code</h1>
+<p class="sub">Últimos %(dias)d días · generado el %(cuando)s · todo sale de tus sesiones, en tu Mac</p>
+<div class="tiles">%(tiles)s</div>
+<h2>Tiempo por día</h2>
+%(porDia)s
+<div class="leyenda">%(leyenda)s</div>
+<h2>Tiempo por proyecto</h2>
+%(porProy)s
+<h2>Los números</h2>
+<details><summary>Ver la tabla (mismos datos, para leer o copiar)</summary>%(tabla)s</details>
+<footer>El costo es una estimación a precio de lista de la API: con suscripción no se
+paga por token, pero sirve para comparar proyectos. El tiempo suma sólo los huecos
+cortos entre mensajes, así que una sesión olvidada abierta no infla el total.</footer>
+</main><div id="tip"></div>
+<script>
+ const tip = document.getElementById('tip');
+ document.addEventListener('mousemove', e => {
+   const el = e.target.closest('[data-t]');
+   if (!el) { tip.style.opacity = 0; return; }
+   tip.textContent = el.dataset.t;
+   const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8);
+   tip.style.left = x + 'px'; tip.style.top = (e.clientY + 16) + 'px'; tip.style.opacity = 1;
+ });
+</script></body></html>"""
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dias", type=int, default=21)
+    ap.add_argument("--no-abrir", action="store_true")
+    a = ap.parse_args()
+
+    por_dia, totales = juntar(a.dias)
+    if not totales:
+        print("No hay sesiones en ese período."); return
+
+    orden = [p for p, _ in sorted(totales.items(), key=lambda x: -x[1]["min"])]
+    principales = orden[:TOPE_SERIES]
+    if len(orden) > TOPE_SERIES:
+        # El 9º color no se inventa: lo que sobra se pliega a "Otros".
+        otros = {"min": 0.0, "usd": 0.0, "pr": 0, "ses": 0}
+        for p in orden[TOPE_SERIES:]:
+            for k in otros:
+                otros[k] += totales[p][k]
+            for d in por_dia:
+                if p in por_dia[d]:
+                    o = por_dia[d].setdefault("Otros", {"min": 0.0, "usd": 0.0, "pr": 0})
+                    for k in ("min", "usd", "pr"):
+                        o[k] += por_dia[d][p][k]
+                    del por_dia[d][p]
+        totales = {p: totales[p] for p in principales}
+        if otros["min"] >= 1:        # "Otros" con 0 minutos sólo ensucia la leyenda
+            totales["Otros"] = otros
+            principales = principales + ["Otros"]
+
+    tot_min = sum(t["min"] for t in totales.values())
+    tot_usd = sum(t["usd"] for t in totales.values())
+    tot_pr = sum(t["pr"] for t in totales.values())
+    tiles = "".join(
+        '<div class="tile"><div class="n">%s</div><div class="l">%s</div></div>' % (n, l)
+        for n, l in [
+            (hm(tot_min), "trabajadas con Claude"),
+            ("%d" % tot_pr, "pedidos"),
+            ("%d" % len([p for p in totales if p != "Otros"]), "proyectos"),
+            ("US$ %.0f" % tot_usd, "estimado a precio de lista"),
+        ])
+    leyenda = "".join(
+        '<span><i class="punto" style="background:%s"></i>%s · %s</span>'
+        % (SERIES_CLARO[i], html.escape(p), hm(totales[p]["min"]))
+        for i, p in enumerate(principales))
+
+    pagina = PAGINA % {
+        "claro": "".join("--s%d:%s;" % (i + 1, c) for i, c in enumerate(SERIES_CLARO)),
+        "oscuro": "".join("--s%d:%s;" % (i + 1, c) for i, c in enumerate(SERIES_OSCURO)),
+        "dias": a.dias,
+        "cuando": dt.datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "tiles": tiles,
+        "porDia": barra_apilada(por_dia, principales,
+                                ["var(--s%d)" % (i + 1) for i in range(len(principales))]),
+        "leyenda": leyenda,
+        "porProy": barras_proyecto(totales, principales,
+                                   ["var(--s%d)" % (i + 1) for i in range(len(principales))]),
+        "tabla": tabla(por_dia, principales),
+    }
+    SALIDA.parent.mkdir(parents=True, exist_ok=True)
+    SALIDA.write_text(pagina, encoding="utf-8")
+    print("Panel: %s" % SALIDA)
+    if not a.no_abrir:
+        try:
+            subprocess.run(["open", str(SALIDA)], check=False)
+        except OSError:
+            webbrowser.open(SALIDA.as_uri())
+
+
+if __name__ == "__main__":
+    main()

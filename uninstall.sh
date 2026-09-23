@@ -25,8 +25,12 @@ fi
 "$CLAUDE_DIR/gadgets/bin/claude-guardia" --desinstalar 2>/dev/null
 "$CLAUDE_DIR/gadgets/bin/claude-buzon" --desinstalar 2>/dev/null
 "$CLAUDE_DIR/gadgets/bin/claude-jobs" --desinstalar 2>/dev/null
+for g in claude-limite claude-diario claude-cola claude-brief; do
+  "$CLAUDE_DIR/gadgets/bin/$g" --desinstalar 2>/dev/null
+done
 rm -f "$CLAUDE_DIR/statusline.sh" "$CLAUDE_DIR/hooks/avisar.sh" "$CLAUDE_DIR/hooks/frenar.sh" "$CLAUDE_DIR/hooks/prebuild-check.sh"
-for c in claude-siri claude-estado claude-guardia claude-buzon claude-anotar claude-permitir claude-jobs claude-prebuild; do rm -f "$HOME/.local/bin/$c"; done
+for c in claude-siri claude-estado claude-guardia claude-buzon claude-anotar claude-permitir claude-jobs claude-prebuild \
+         claude-horas claude-buscar claude-panel claude-limite claude-cola claude-diario claude-limpiar claude-brief; do rm -f "$HOME/.local/bin/$c"; done
 dir_plugins=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)
 [ -n "$dir_plugins" ] && [ -L "$dir_plugins/claude.1m.sh" ] && rm -f "$dir_plugins/claude.1m.sh"
 [ "$dir_plugins" = "$CLAUDE_DIR/gadgets/swiftbar" ] && defaults delete com.ameba.SwiftBar PluginDirectory 2>/dev/null || true

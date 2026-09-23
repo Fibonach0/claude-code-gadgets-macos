@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Buscá en todo lo que ya trabajaste con Claude Code.
+
+Tus sesiones viejas están en el disco y son imposibles de encontrar a mano.
+Esto busca en todas, junta los pedazos que importan y te contesta con la
+respuesta, diciendo de qué sesión y de qué día la sacó.
+
+    claude-buscar "el WAF que bloqueaba la descarga"
+    claude-buscar "cómo quedó el deploy" --rapido      sólo la lista de sesiones
+    claude-buscar "urea" --proyecto bot --dias 90
+
+Todo pasa en tu Mac: la búsqueda es local y sólo los fragmentos elegidos van al
+modelo para redactar la respuesta.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+from datetime import datetime, timedelta
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import tx  # noqa: E402
+
+TOPE_CHARS = 60_000        # lo que se le manda al modelo, como mucho
+POR_SESION = 6             # fragmentos por sesión, como mucho
+
+
+def texto_de(obj: dict) -> str:
+    """El texto legible de una línea del transcript (sin tool_use ni ruido)."""
+    msg = obj.get("message") or {}
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    partes = []
+    if isinstance(c, list):
+        for b in c:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text":
+                partes.append(b.get("text") or "")
+            elif b.get("type") == "tool_result":
+                r = b.get("content")
+                if isinstance(r, str):
+                    partes.append(r[:400])
+    return "\n".join(p for p in partes if p)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("texto", nargs="+")
+    ap.add_argument("--dias", type=int, default=0, help="sólo los últimos N días")
+    ap.add_argument("--proyecto", default="")
+    ap.add_argument("--rapido", action="store_true", help="sólo dónde aparece")
+    ap.add_argument("--modelo", default=os.environ.get("BUSCAR_MODELO", "sonnet"))
+    a = ap.parse_args()
+    consulta = " ".join(a.texto)
+    palabras = [p for p in re.split(r"\W+", consulta.lower()) if len(p) > 3]
+    if not palabras:
+        palabras = [consulta.lower()]
+
+    desde = None
+    if a.dias:
+        desde = (datetime.now().astimezone() - timedelta(days=a.dias)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+
+    hallazgos = []
+    for s in tx.sesiones(desde):
+        if a.proyecto and a.proyecto.lower() not in s["proyecto"].lower():
+            continue
+        trozos, puntos = [], 0
+        try:
+            with open(s["archivo"], errors="ignore") as fh:
+                for linea in fh:
+                    bajo = linea.lower()
+                    if not any(p in bajo for p in palabras):
+                        continue
+                    try:
+                        o = json.loads(linea)
+                    except json.JSONDecodeError:
+                        continue
+                    t = texto_de(o)
+                    if not t:
+                        continue
+                    bajo_t = t.lower()
+                    hits = sum(bajo_t.count(p) for p in palabras)
+                    if not hits:
+                        continue
+                    distintas = sum(1 for p in palabras if p in bajo_t)
+                    puntos += hits + distintas * 5   # cubrir varias palabras vale más
+                    i = min((bajo_t.find(p) for p in palabras if p in bajo_t), default=0)
+                    trozos.append((hits + distintas * 5, t[max(0, i - 500): i + 1500]))
+        except OSError:
+            continue
+        if puntos:
+            # Los mejores fragmentos de esa sesión, no los primeros: lo que se
+            # nombró al pasar al principio tapaba a donde realmente se resolvió.
+            trozos.sort(key=lambda x: -x[0])
+            hallazgos.append((puntos, s, [t for _, t in trozos[:POR_SESION]]))
+
+    if not hallazgos:
+        print("No encontré nada sobre eso en tus sesiones.")
+        return
+    hallazgos.sort(key=lambda h: (-h[0], h[1]["desde"]))
+
+    print("Encontrado en %d sesiones:" % len(hallazgos))
+    for puntos, s, _ in hallazgos[:8]:
+        print("  %s · %-28s %3d menciones · %s"
+              % (s["dia"], s["proyecto"][:28], puntos, (s["tema"] or "")[:44]))
+    if a.rapido:
+        return
+
+    contexto, usado = [], 0
+    for puntos, s, trozos in hallazgos[:6]:
+        for t in trozos:
+            bloque = "\n--- %s · %s ---\n%s" % (s["dia"], s["proyecto"], t)
+            if usado + len(bloque) > TOPE_CHARS:
+                break
+            contexto.append(bloque); usado += len(bloque)
+
+    pedido = (
+        "Esto son fragmentos de mis sesiones viejas de trabajo. Respondé la pregunta "
+        "usando SÓLO lo que dicen, en castellano rioplatense y en pocas frases.\n\n"
+        "Pregunta: %s\n\n%s\n\n"
+        "Cerrá diciendo de qué día y proyecto sale la respuesta. Si los fragmentos no "
+        "alcanzan para responder, decilo derecho en vez de suponer."
+        % (consulta, "\n".join(contexto))
+    )
+    print("\n" + "-" * 70)
+    r = subprocess.run(
+        ["claude", "-p", pedido, "--no-session-persistence", "--model", a.modelo,
+         "--permission-mode", "dontAsk", "--allowedTools", ""],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    print((r.stdout or r.stderr).strip())
+
+
+if __name__ == "__main__":
+    main()

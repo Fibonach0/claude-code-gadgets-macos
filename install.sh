@@ -57,7 +57,8 @@ install -m 755 "$AQUI/claude/hooks/frenar.sh" "$CLAUDE_DIR/hooks/frenar.sh"
 install -m 755 "$AQUI/claude/hooks/prebuild-check.sh" "$CLAUDE_DIR/hooks/prebuild-check.sh"
 for f in "$AQUI"/bin/*; do install -m 755 "$f" "$GADGETS/bin/"; done
 mkdir -p "$HOME/.local/bin"
-for c in claude-siri claude-estado claude-guardia claude-buzon claude-anotar claude-permitir claude-jobs claude-prebuild; do
+for c in claude-siri claude-estado claude-guardia claude-buzon claude-anotar claude-permitir claude-jobs claude-prebuild \
+         claude-horas claude-buscar claude-panel claude-limite claude-cola claude-diario claude-limpiar; do
   ln -sf "$GADGETS/bin/$c" "$HOME/.local/bin/$c"
 done
 ok "statusline, hooks y comandos en $GADGETS/bin (claude-siri en ~/.local/bin)"
@@ -142,5 +143,8 @@ cat <<EOF
       claude-guardia --instalar     (antes: definí GUARDIA en la config)
       claude-buzon --instalar       (crea la carpeta en iCloud Drive)
   • Estado de todo en una pantalla: claude-estado
+  • Tus números: claude-horas · claude-panel · claude-buscar "…" · claude-limpiar
+  • Los que corren solos (opcionales): claude-limite --instalar,
+    claude-diario --instalar, claude-cola --instalar, claude-brief --instalar
   • Para desinstalar: ./uninstall.sh
 EOF

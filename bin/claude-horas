@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Parte de horas: cuánto le dedicaste a cada proyecto, sacado de tus propias
+sesiones de Claude Code. Sirve para facturar y para ver dónde se te va el día.
+Todo sale de ~/.claude y no se manda a ningún lado.
+
+    claude-horas                   la semana, por proyecto
+    claude-horas --dias 30         el último mes
+    claude-horas --detalle         día por día
+    claude-horas --csv             para pegar en una planilla
+    claude-horas --proyecto hub    sólo ese
+
+El tiempo se mide sumando los huecos CORTOS entre mensajes (ver tx.py): una
+sesión abierta toda la tarde con dos preguntas no cuenta como toda la tarde.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import tx  # noqa: E402
+
+
+def hm(minutos: float) -> str:
+    h, m = divmod(int(round(minutos)), 60)
+    return "%dh %02dm" % (h, m) if h else "%dm" % m
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dias", type=int, default=7)
+    ap.add_argument("--detalle", action="store_true")
+    ap.add_argument("--csv", action="store_true")
+    ap.add_argument("--proyecto", default="")
+    a = ap.parse_args()
+
+    desde = None
+    if a.dias:
+        from datetime import datetime, timedelta
+        desde = (datetime.now().astimezone() - timedelta(days=a.dias)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+
+    por_dia: dict = {}
+    for s in tx.sesiones(desde):
+        if a.proyecto and a.proyecto.lower() not in s["proyecto"].lower():
+            continue
+        d = por_dia.setdefault(s["dia"], {})
+        p = d.setdefault(s["proyecto"], {"min": 0.0, "usd": 0.0, "ses": 0, "prompts": 0})
+        p["min"] += s["minutos"]; p["usd"] += s["costo"]
+        p["ses"] += 1; p["prompts"] += s["prompts"]
+
+    if not por_dia:
+        print("No encontré sesiones en ese período.")
+        return
+
+    if a.csv:
+        print("dia;proyecto;minutos;horas;sesiones;pedidos;costo_estimado_usd")
+        for dia in sorted(por_dia):
+            for proy, v in sorted(por_dia[dia].items()):
+                fila = "%s;%s;%.0f;%.2f;%d;%d;%.2f" % (
+                    dia, proy, v["min"], v["min"] / 60, v["ses"], v["prompts"], v["usd"])
+                print(fila.replace(".", ","))   # coma decimal, para Excel en español
+        return
+
+    if a.detalle:
+        for dia in sorted(por_dia):
+            total = sum(v["min"] for v in por_dia[dia].values())
+            print("\n%s  (%s)" % (dia, hm(total)))
+            for proy, v in sorted(por_dia[dia].items(), key=lambda x: -x[1]["min"]):
+                print("   %8s  %-32s %d sesiones, %d pedidos"
+                      % (hm(v["min"]), proy[:32], v["ses"], v["prompts"]))
+        print()
+
+    por_proyecto: dict = {}
+    for dia, proys in por_dia.items():
+        for proy, v in proys.items():
+            p = por_proyecto.setdefault(proy, {"min": 0.0, "usd": 0.0, "ses": 0,
+                                               "prompts": 0, "dias": set()})
+            p["min"] += v["min"]; p["usd"] += v["usd"]
+            p["ses"] += v["ses"]; p["prompts"] += v["prompts"]; p["dias"].add(dia)
+
+    print("%-34s%9s%6s%10s%9s%10s" % ("PROYECTO", "TIEMPO", "DÍAS", "SESIONES",
+                                      "PEDIDOS", "USD est."))
+    for proy, p in sorted(por_proyecto.items(), key=lambda x: -x[1]["min"]):
+        print("%-34s%9s%6d%10d%9d%10.2f" % (proy[:33], hm(p["min"]), len(p["dias"]),
+                                            p["ses"], p["prompts"], p["usd"]))
+    tm = sum(p["min"] for p in por_proyecto.values())
+    tu = sum(p["usd"] for p in por_proyecto.values())
+    print("-" * 78)
+    print("%-34s%9s%6s%10s%9s%10.2f" % ("TOTAL", hm(tm), "", "", "", tu))
+    print("\nEl USD es una estimación a precio de lista de la API: con suscripción\n"
+          "no se paga por token, pero sirve para comparar proyectos entre sí.")
+
+
+if __name__ == "__main__":
+    main()

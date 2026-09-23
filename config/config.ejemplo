@@ -57,3 +57,13 @@
 # ── Freno de mano: excepciones ───────────────────────────────────────────────
 # Las que aprobaste con `claude-permitir --siempre` viven en
 # ~/.config/claude-gadgets/freno-excepciones (una expresión por línea).
+
+# ── Tus números, la cola y el diario ─────────────────────────────────────────
+# LIMITE_AVISOS="60 80 90"
+# COLA_DIR="$HOME/proyectos"
+# COLA_MODO=seguro          # "trabajar" = además edita archivos y corre comandos
+# COLA_MODELO=sonnet
+# DIARIO_DIR="$HOME/Documents/Diario"
+# DIARIO_HORA=20
+# LIMPIAR_DIAS=90
+# BUSCAR_MODELO=sonnet

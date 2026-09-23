@@ -1,0 +1,88 @@
+#!/bin/bash
+# Diario de trabajo: cada noche, un resumen de lo que hiciste con Claude ese
+# día, por proyecto. Alimenta el parte de horas y te ahorra reconstruir la
+# semana de memoria el lunes.
+#
+#   claude-diario                  escribe el de hoy
+#   claude-diario --dia 2026-09-19 el de otro día
+#   claude-diario --ver            abre la carpeta del diario
+#   claude-diario --instalar / --desinstalar   (corre solo a las 20:00)
+#
+# Config en ~/.config/claude-gadgets/config:
+#   DIARIO_DIR="$HOME/Documents/Diario"
+#   DIARIO_HORA=20
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=~/.config/claude-gadgets/config
+[ -f "$conf" ] && . "$conf"
+# $0 puede ser el enlace de ~/.local/bin: hay que resolverlo para encontrar tx.py.
+real=$0; while [ -L "$real" ]; do real=$(readlink "$real"); done
+GADGETS=$(cd "$(dirname "$real")" && pwd)
+dir="${DIARIO_DIR:-$HOME/Documents/Diario}"
+plist=~/Library/LaunchAgents/com.claude-gadgets.diario.plist
+dia=$(date +%F)
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dia) dia=$2; shift 2 ;;
+    --ver) mkdir -p "$dir"; open "$dir"; exit 0 ;;
+    --instalar)
+      mkdir -p ~/Library/LaunchAgents
+      cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.diario</string>
+  <key>ProgramArguments</key><array><string>$HOME/.claude/gadgets/bin/claude-diario</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${DIARIO_HORA:-20}</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/diario.err</string>
+</dict></plist>
+PLIST
+      launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+        && echo "✓ Escribo el diario todos los días a las ${DIARIO_HORA:-20}:00"; exit 0 ;;
+    --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Diario apagado"; exit 0 ;;
+    *) echo "No entiendo $1"; exit 1 ;;
+  esac
+done
+
+mkdir -p "$dir"
+salida="$dir/$dia.md"
+
+# Qué pasó ese día: las sesiones (tiempo, pedidos) y lo que se commiteó.
+sesiones=$(python3 "$GADGETS/tx.py" sesiones --desde "$dia" 2>/dev/null \
+  | jq -c --arg d "$dia" 'select(.dia == $d) | {proyecto, minutos, prompts, tema, cwd}')
+[ -z "$sesiones" ] && { echo "No hay sesiones el $dia, no escribo nada."; exit 0; }
+
+commits=""
+while IFS= read -r cwd; do
+  [ -d "$cwd/.git" ] || continue
+  c=$(git -C "$cwd" log --since="$dia 00:00" --until="$dia 23:59" --format='%h %s' --all 2>/dev/null | head -20)
+  [ -n "$c" ] && commits+="$(basename "$cwd"):"$'\n'"$c"$'\n'
+done < <(jq -r .cwd <<<"$sesiones" | sort -u)
+
+texto=$(claude -p "Escribí mi diario de trabajo del $dia, en castellano rioplatense.
+
+SESIONES (una línea por sesión, con minutos trabajados y de qué se habló):
+$sesiones
+
+COMMITS DE ESE DÍA:
+${commits:-(ninguno)}
+
+Formato: markdown. Un encabezado '## <proyecto>' por proyecto que haya tenido trabajo, y
+abajo 3 a 6 viñetas de qué se hizo, en lenguaje de lo que cambió para el usuario, no de
+código. Si algo quedó a medias o pendiente, una viñeta final que empiece con 'Pendiente:'.
+Cerrá con una línea '## En una frase' que resuma el día.
+No inventes nada que no esté en los datos; si un proyecto sólo tiene minutos y ningún
+detalle, decí eso mismo en una viñeta." \
+  --no-session-persistence --model "${DIARIO_MODELO:-sonnet}" --permission-mode dontAsk \
+  --allowedTools "" </dev/null 2>&1)
+
+{
+  echo "# Diario · $dia"; echo
+  printf '%s\n' "$texto"
+  echo; echo "---"; echo
+  python3 "$GADGETS/claude-horas" --dias 1 2>/dev/null | head -20
+} > "$salida"
+
+echo "Diario: $salida"
+osascript -e "display notification \"$(basename "$salida")\" with title \"Diario del día escrito\" sound name \"Pop\"" >/dev/null 2>&1 & disown

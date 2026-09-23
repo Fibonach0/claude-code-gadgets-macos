@@ -1,0 +1,70 @@
+#!/bin/bash
+# Limpiador: qué está ocupando disco de lo que deja Claude Code, y cómo
+# liberarlo. Por defecto sólo MIRA: borrar hay que pedirlo.
+#
+#   claude-limpiar              el informe
+#   claude-limpiar --hacer      borra lo viejo (pregunta antes)
+#   claude-limpiar --dias 120   qué considerar "viejo" (por defecto 90)
+#
+# OJO con los transcripts: son lo que buscan claude-buscar, claude-horas y el
+# panel. Borrarlos libera disco y te deja sin memoria de lo que ya resolviste,
+# así que el corte por defecto es generoso y nunca toca los últimos 90 días.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+[ -f ~/.config/claude-gadgets/config ] && . ~/.config/claude-gadgets/config
+dias=${LIMPIAR_DIAS:-90}; hacer=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --hacer) hacer=1; shift ;;
+    --dias) dias=$2; shift 2 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "No entiendo $1"; exit 1 ;;
+  esac
+done
+
+tam() { du -sh "$1" 2>/dev/null | cut -f1; }
+cuantos() { find "$1" -type f -mtime +"$dias" 2>/dev/null | wc -l | tr -d ' '; }
+pesan() {  # cuánto pesan los archivos más viejos que $dias, en MB
+  find "$1" -type f -mtime +"$dias" -print0 2>/dev/null \
+    | xargs -0 stat -f %z 2>/dev/null | awk '{s+=$1} END {printf "%.0f", s/1048576}'
+}
+
+printf '%-34s %8s   %s\n' "QUÉ" "TAMAÑO" "VIEJO (+${dias}d)"
+total_viejo=0
+for d in ~/.claude/projects ~/.claude/file-history ~/.claude/shell-snapshots \
+         ~/.claude/cache ~/.claude/downloads ~/.claude/paste-cache ~/.claude/telemetry; do
+  [ -d "$d" ] || continue
+  v=$(pesan "$d"); n=$(cuantos "$d"); total_viejo=$((total_viejo + ${v:-0}))
+  printf '%-34s %8s   %s MB en %s archivos\n' "${d/#$HOME/~}" "$(tam "$d")" "${v:-0}" "$n"
+done
+for extra in ~/.claude/gadgets/csbuild.dmg /Volumes/claude-cs; do
+  [ -e "$extra" ] && printf '%-34s %8s   %s\n' "${extra/#$HOME/~}" "$(tam "$extra")" "volumen de builds de prueba"
+done
+ses=$(ls ~/.claude/projects/*/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+echo
+echo "Tenés $ses sesiones guardadas; $total_viejo MB tienen más de $dias días."
+
+if [ $hacer = 0 ]; then
+  echo
+  echo "Esto fue sólo el informe. Para liberar: claude-limpiar --hacer"
+  echo "(los transcripts son la memoria de claude-buscar y del panel: se borran"
+  echo " sólo los de más de $dias días, y las cachés que se rehacen solas.)"
+  exit 0
+fi
+
+echo
+printf 'Borro cachés e historial de más de %s días (%s MB). ¿Sigo? [s/N] ' "$dias" "$total_viejo"
+read -r r
+case "$r" in s|S|si|SI|sí) ;; *) echo "No toqué nada."; exit 0 ;; esac
+
+liberado=0
+for d in ~/.claude/file-history ~/.claude/shell-snapshots ~/.claude/cache \
+         ~/.claude/paste-cache ~/.claude/telemetry; do
+  [ -d "$d" ] || continue
+  v=$(pesan "$d"); liberado=$((liberado + ${v:-0}))
+  find "$d" -type f -mtime +"$dias" -delete 2>/dev/null
+  find "$d" -type d -empty -delete 2>/dev/null
+done
+v=$(pesan ~/.claude/projects); liberado=$((liberado + ${v:-0}))
+find ~/.claude/projects -name '*.jsonl' -mtime +"$dias" -delete 2>/dev/null
+echo "✓ Liberados unos $liberado MB. Las sesiones de los últimos $dias días quedaron intactas."

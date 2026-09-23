@@ -1,0 +1,84 @@
+#!/bin/bash
+# Aviso de límite: cuando el cupo semanal se te está por acabar, te avisa y te
+# dice qué hacer, en vez de que te enteres un jueves a la tarde cuando se corta.
+#
+#   claude-limite              revisa ahora (lo que corre solo cada media hora)
+#   claude-limite --instalar / --desinstalar
+#
+# Avisa UNA sola vez por umbral y por ventana: cuando la ventana se renueva,
+# vuelve a estar listo. Un aviso repetido cada media hora se ignora solo.
+#
+# Config en ~/.config/claude-gadgets/config:
+#   LIMITE_AVISOS="60 80 90"   # en qué porcentajes del cupo semanal avisar
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+[ -f ~/.config/claude-gadgets/config ] && . ~/.config/claude-gadgets/config
+# CLAUDE_ESTADO permite apuntar a otra carpeta (sirve para probarlo sin que la
+# statusline pise el archivo de uso mientras tanto).
+est=${CLAUDE_ESTADO:-$HOME/.claude/estado}; uso="$est/uso.json"; visto="$est/limite-visto"
+plist=~/Library/LaunchAgents/com.claude-gadgets.limite.plist
+
+case "${1:-}" in
+  --instalar)
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.limite</string>
+  <key>ProgramArguments</key><array><string>$HOME/.claude/gadgets/bin/claude-limite</string></array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/limite.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+      && echo "✓ Miro el cupo cada media hora"; exit 0 ;;
+  --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Aviso de límite apagado"; exit 0 ;;
+esac
+
+[ -f "$uso" ] || { echo "Todavía no hay datos de cupo (abrí una sesión de Claude Code)."; exit 0; }
+p7=$(jq -r '.rate_limits.seven_day.used_percentage // empty' "$uso")
+p5=$(jq -r '.rate_limits.five_hour.used_percentage // empty' "$uso")
+r7=$(jq -r '.rate_limits.seven_day.resets_at // empty' "$uso")
+[ -z "$p7" ] && exit 0
+pct=$(printf '%.0f' "$p7")
+
+echo "Cupo: sesión $(printf '%.0f' "${p5:-0}")% · semana ${pct}%"
+
+# La ventana actual identifica el aviso: cuando se renueva, arranca de cero.
+ventana="${r7:-hoy}"
+anterior=0; guardada=""
+[ -f "$visto" ] && { guardada=$(sed -n 1p "$visto"); anterior=$(sed -n 2p "$visto"); }
+[ "$guardada" != "$ventana" ] && anterior=0
+
+# Sólo el umbral MÁS ALTO que se cruzó: si pasás de 55 a 85 de una, no tiene
+# sentido avisarte dos veces seguidas lo mismo con distinto número.
+umbral=0
+for u in ${LIMITE_AVISOS:-60 80 90}; do
+  [ "$pct" -ge "$u" ] && [ "${anterior:-0}" -lt "$u" ] && [ "$u" -gt "$umbral" ] && umbral=$u
+done
+for u in $umbral; do
+  if [ "$u" -gt 0 ]; then
+    case $u in
+      90) consejo="Queda poco: dejá Opus para lo que de verdad lo necesite y pasá el resto a Sonnet con /model." ;;
+      80) consejo="Vas rápido: para lo mecánico (tests, formateo, búsquedas) conviene Sonnet o Haiku." ;;
+      *)  consejo="Vas por la mitad larga de la semana." ;;
+    esac
+    # resets_at puede venir en epoch o en ISO-8601, según la versión.
+    cuando=""
+    if [ -n "$r7" ]; then
+      case "$r7" in
+        ''|*[!0-9]*) fecha=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "${r7%%.*}" '+%d/%m %H:%M' 2>/dev/null) ;;
+        *)           fecha=$(date -r "$r7" '+%d/%m %H:%M' 2>/dev/null) ;;
+      esac
+      [ -n "$fecha" ] && cuando=" Se renueva el $fecha."
+    fi
+    msg="Llevás ${pct}% del cupo semanal.${cuando} $consejo"
+    osascript -e "display notification \"${msg//\"/\'}\" with title \"Cupo de Claude al ${pct}%\" sound name \"Submarine\"" >/dev/null 2>&1 & disown
+    [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: Cupo al ${pct}%" -d "$msg" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
+    printf '%s | %s\n' "$(date '+%d/%m %H:%M')" "$msg" >> "$est/limite.log"
+    echo "$msg"
+    printf '%s\n%s\n' "$ventana" "$u" > "$visto"
+  fi
+done

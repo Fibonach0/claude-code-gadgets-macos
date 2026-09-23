@@ -19,6 +19,13 @@ Se instalan con un comando y se desinstalan con otro.
 | **Anotar por voz** | `claude-anotar "…"`: guarda un pendiente con fecha y proyecto (lo clasifica solo). Va bien como Atajo del iPhone. |
 | **Autorizar desde el celular** | `claude-permitir`: deja pasar, una vez y por 10 minutos, el último comando que frenó el freno de mano. Y **aprende**: a la tercera vez te ofrece dejarlo fijo (`--siempre`), así el freno queda para lo raro. |
 | **Parte de la mañana** | `claude-brief`: cuatro o cinco frases habladas — cupo, qué se rompió mientras dormías, pendientes y agenda. Se cocina temprano en la Mac y el iPhone sólo lo lee. |
+| **Parte de horas** | `claude-horas`: cuánto le dedicaste a cada proyecto, por día o por mes, con `--csv` para la planilla. Sale de tus propias sesiones. |
+| **Buscador** | `claude-buscar "el WAF que bloqueaba"`: busca en todo lo que ya trabajaste y te contesta, diciendo de qué día y proyecto lo sacó. |
+| **Panel** | `claude-panel`: una página local con tiempo por día y por proyecto, pedidos y costo estimado. |
+| **Aviso de límite** | `claude-limite`: cuando el cupo semanal pasa 60/80/90%, avisa una vez y sugiere bajar de modelo. |
+| **Cola de pedidos** | `claude-cola "…"`: dejás encargues (también desde el iPhone) y la Mac los toma de a uno. Modo lectura por defecto. |
+| **Diario** | `claude-diario`: cada noche escribe qué hiciste ese día, por proyecto. |
+| **Limpiador** | `claude-limpiar`: qué ocupa disco de lo que deja Claude Code, y cómo liberarlo sin perder la memoria útil. |
 | **Permisos** (opcional) | Deja correr sin preguntar comandos de sólo lectura (`git status/log/diff`, `ls`, `gh pr view`, `railway logs`…). |
 
 ## Instalar
@@ -98,6 +105,13 @@ ANOTAR_PISTAS="el hub es tal repo; el bot es tal otro"
 BRIEF_HORA=7          # se arma 7:30
 BRIEF_AGENDA=1        # incluye la agenda (conector de Google Calendar)
 BRIEF_VOZ="Paulina"   # voz de macOS para --decir
+
+# Tus números y la cola
+LIMITE_AVISOS="60 80 90"          # en qué % del cupo semanal avisar
+COLA_DIR="$HOME/proyectos"        # dónde trabaja la cola
+COLA_MODO=seguro                  # "trabajar" la deja editar archivos
+DIARIO_DIR="$HOME/Documents/Diario"
+LIMPIAR_DIAS=90                   # qué es "viejo" para el limpiador
 ```
 
 Los que corren solos, una vez cada uno:
@@ -107,6 +121,9 @@ claude-guardia --instalar    # deploys, cada 2 minutos
 claude-buzon --instalar      # la carpeta mágica
 claude-jobs --instalar       # los trabajos programados, una vez por día
 claude-brief --instalar      # el parte hablado, temprano
+claude-limite --instalar     # mira el cupo cada media hora
+claude-diario --instalar     # escribe el diario a las 20:00
+claude-cola --instalar       # toma un pedido de la cola cada 5 minutos
 ```
 
 > `NTFY_TOPIC` manda los avisos a ntfy.sh, un servicio público: cualquiera que
@@ -140,6 +157,14 @@ bin/claude-prebuild           build en volumen sensible a mayúsculas
 bin/claude-anotar             pendientes dictados
 bin/claude-permitir           autoriza el último comando frenado (y aprende)
 bin/claude-brief              el parte de la mañana, para escuchar
+bin/tx.py                     lee tus sesiones (lo usan horas, panel, diario, buscar)
+bin/claude-horas              parte de horas por proyecto
+bin/claude-buscar             busca en tus sesiones viejas y responde
+bin/claude-panel              página local con tus números
+bin/claude-limite             aviso cuando el cupo semanal se acaba
+bin/claude-cola               cola de pedidos, de a uno
+bin/claude-diario             el diario de trabajo de cada día
+bin/claude-limpiar            informe de disco y limpieza
 finder/Preguntarle a Claude.workflow
 config/                       ejemplo de config, hooks, permisos
 pruebas/                      24 casos del freno, el circuito de autorización
