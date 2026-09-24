@@ -21,8 +21,10 @@ case "$TERM_PROGRAM" in
   vscode) mia="Code" ;;       ghostty) mia="Ghostty" ;;  WarpTerminal) mia="Warp" ;;
   *) mia="$TERM_PROGRAM" ;;
 esac
-avisar() {  # titulo, texto, sonido
+avisar() {  # titulo, texto, sonido[, "urgente"]
   [ "$frente" = "$mia" ] && return
+  # En horario de silencio sólo pasa lo que te está bloqueando.
+  declare -f en_silencio >/dev/null && en_silencio "${4:-}" && return
   # osascript en segundo plano: un hook nunca debe quedar colgado esperando.
   # (terminal-notifier se cuelga en este macOS, por eso no se usa.)
   local t=${1//\"/\'} m=${2//\"/\'}
@@ -33,7 +35,7 @@ avisar() {  # titulo, texto, sonido
 
 case "$evento" in
   prompt)   guardar trabajando ;;
-  necesita) guardar esperando; avisar "Claude · $proyecto" "${msg:-Te necesita}" Glass ;;
+  necesita) guardar esperando; avisar "Claude · $proyecto" "${msg:-Te necesita}" Glass urgente ;;
   listo)    guardar listo;     avisar "Claude · $proyecto" "Terminó" Hero ;;
   fin)      rm -f "$f" ;;
 esac

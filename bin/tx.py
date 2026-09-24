@@ -87,10 +87,18 @@ def leer_sesion(archivo: pathlib.Path) -> dict | None:
                     prompts += 1
                     if primera is None:
                         c = o.get("message", {}).get("content")
+                        t = ""
                         if isinstance(c, str):
-                            primera = c[:200]
+                            t = c
                         elif isinstance(c, list) and c and isinstance(c[0], dict):
-                            primera = (c[0].get("text") or "")[:200]
+                            t = c[0].get("text") or ""
+                        t = t.strip()
+                        # Un /clear o un comando local no son el tema de la sesión:
+                        # el tema es la primera cosa que el usuario pidió de verdad.
+                        if t and not t.startswith(("<local-command-caveat>",
+                                                   "<command-name>", "Caveat:",
+                                                   "<system-reminder>")):
+                            primera = t[:200]
                 if o.get("type") != "assistant":
                     continue
                 msg = o.get("message", {})

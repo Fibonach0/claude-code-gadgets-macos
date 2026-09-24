@@ -17,6 +17,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG=${LANG:-es_AR.UTF-8}
 conf=~/.config/claude-gadgets/config
 [ -f "$conf" ] && . "$conf"
+[ -f $HOME/.claude/gadgets/bin/silencio.sh ] && . $HOME/.claude/gadgets/bin/silencio.sh   # horario de no molestar
 tok=~/.config/claude-gadgets/token
 [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$tok" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$tok")"
 buzon="${BUZON:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Para Claude}"
@@ -25,6 +26,8 @@ plist=~/Library/LaunchAgents/com.claude-gadgets.buzon.plist
 log=~/.claude/estado/buzon.log
 
 avisar() { local t=${1//\"/\'} m=${2//\"/\'}
+  if declare -f en_silencio >/dev/null && en_silencio "${4:-}"; then
+    printf '%s | (en silencio) %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"; return; fi
   osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Glass}\"" >/dev/null 2>&1 & disown
   [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: $1" -d "$2" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
   printf '%s | %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"; }

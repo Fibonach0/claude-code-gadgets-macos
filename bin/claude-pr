@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Cuánto te costó cada PR: tiempo, pedidos y tamaño.
+
+    claude-pr                    los PRs mergeados de los últimos 14 días
+    claude-pr --dias 60
+    claude-pr --proyecto hub
+    claude-pr --csv              para la planilla
+
+El tiempo se reparte: de cada día se toman tus horas en ese proyecto y se
+dividen entre los PRs que se tocaron ese día (ver prs.py). Es una estimación
+para presupuestar y para ver qué tipo de tarea se te va de largo, no un reloj.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import sys
+from datetime import datetime, timedelta
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import prs  # noqa: E402
+
+
+def hm(minutos: float) -> str:
+    h, m = divmod(int(round(minutos)), 60)
+    return "%dh %02dm" % (h, m) if h else "%dm" % m
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dias", type=int, default=14)
+    ap.add_argument("--proyecto", default="")
+    ap.add_argument("--csv", action="store_true")
+    a = ap.parse_args()
+
+    desde = (datetime.now().astimezone() - timedelta(days=a.dias + 7)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    repos = prs.repos_desde_sesiones(desde)
+    if a.proyecto:
+        repos = {r: n for r, n in repos.items() if a.proyecto.lower() in n.lower()}
+    if not repos:
+        print("No encontré repos con trabajo tuyo en ese período.")
+        return
+
+    datos = [p for p in prs.repartir(repos, a.dias) if p["minutos"] > 0]
+    if not datos:
+        print("No hay PRs mergeados con tiempo atribuible en ese período.")
+        return
+    datos.sort(key=lambda p: -p["minutos"])
+
+    if a.csv:
+        print("proyecto;pr;titulo;minutos;horas;pedidos;lineas;horas_abierto")
+        for p in datos:
+            fila = "%s;%d;%s;%.0f;%.2f;%d;%d;%.1f" % (
+                p["proyecto"], p["number"], p["title"].replace(";", ","), p["minutos"],
+                p["minutos"] / 60, p["prompts"], p["additions"] + p["deletions"],
+                p["horas_abierto"])
+            print(fila.replace(".", ","))
+        return
+
+    print("%-24s%7s  %-42s%9s%8s%9s" % ("PROYECTO", "PR", "TÍTULO", "TIEMPO",
+                                        "PEDIDOS", "LÍNEAS"))
+    for p in datos:
+        print("%-24s%7s  %-42s%9s%8d%9d"
+              % (p["proyecto"][:23], "#%d" % p["number"], p["title"][:41],
+                 hm(p["minutos"]), p["prompts"], p["additions"] + p["deletions"]))
+
+    tot = sum(p["minutos"] for p in datos)
+    print("-" * 100)
+    print("%d PRs · %s en total · %s por PR en promedio"
+          % (len(datos), hm(tot), hm(tot / len(datos))))
+    lineas = sum(p["additions"] + p["deletions"] for p in datos)
+    if lineas:
+        print("%.0f líneas por hora de trabajo." % (lineas / max(tot / 60, 0.1)))
+    print("\nEl tiempo por PR es repartido, no medido: un día con cuatro PRs le da\n"
+          "un cuarto a cada uno. Sirve para presupuestar, no para facturar al minuto.")
+
+
+if __name__ == "__main__":
+    main()

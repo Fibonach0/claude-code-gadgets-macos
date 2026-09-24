@@ -1,0 +1,123 @@
+#!/bin/bash
+# Vigía: lo que quedó a medio guardar. Trabajo sin commitear que ya lleva horas,
+# ramas que nunca se mergearon, worktrees olvidados y commits sin pushear.
+#
+#   claude-vigia                 el informe
+#   claude-vigia --avisar        además manda una notificación si hay algo
+#   claude-vigia --instalar      lo deja mirando cada 2 horas
+#   claude-vigia --desinstalar
+#
+# Los repos salen de tus sesiones (donde venís trabajando), o de VIGIA_REPOS.
+#
+# Config en ~/.config/claude-gadgets/config:
+#   VIGIA_HORAS=4      # a partir de cuántas horas sin commitear molesta
+#   VIGIA_RAMAS=14     # ramas sin tocar hace más de N días
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG=${LANG:-es_AR.UTF-8}
+conf=${CLAUDE_GADGETS_CONF:-$HOME/.config/claude-gadgets/config}
+[ -f "$conf" ] && . "$conf"
+[ -f $HOME/.claude/gadgets/bin/silencio.sh ] && . $HOME/.claude/gadgets/bin/silencio.sh   # horario de no molestar
+real=$0; while [ -L "$real" ]; do real=$(readlink "$real"); done
+GADGETS=$(cd "$(dirname "$real")" && pwd)
+est=${CLAUDE_ESTADO:-$HOME/.claude/estado}; mkdir -p "$est"
+plist=~/Library/LaunchAgents/com.claude-gadgets.vigia.plist
+horas=${VIGIA_HORAS:-4}; viejas=${VIGIA_RAMAS:-14}
+avisar_flag=0
+
+case "${1:-}" in
+  --avisar) avisar_flag=1 ;;
+  --instalar)
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.claude-gadgets.vigia</string>
+  <key>ProgramArguments</key><array>
+    <string>$HOME/.claude/gadgets/bin/claude-vigia</string><string>--avisar</string></array>
+  <key>StartInterval</key><integer>7200</integer>
+  <key>StandardErrorPath</key><string>$HOME/.claude/estado/vigia.err</string>
+</dict></plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null; launchctl load "$plist" \
+      && echo "✓ Miro los repos cada 2 horas"; exit 0 ;;
+  --desinstalar) launchctl unload "$plist" 2>/dev/null; rm -f "$plist"; echo "✓ Vigía apagado"; exit 0 ;;
+esac
+
+# ── Qué repos mirar ──────────────────────────────────────────────────────────
+repos=()
+if [ ${#VIGIA_REPOS[@]-0} -gt 0 ]; then
+  repos=("${VIGIA_REPOS[@]}")
+else
+  while IFS= read -r cwd; do
+    [ -d "$cwd/.git" ] && repos+=("$cwd")
+  done < <(python3 "$GADGETS/tx.py" sesiones --dias 21 2>/dev/null \
+            | jq -r '.cwd' | sort -u)
+fi
+[ ${#repos[@]} -eq 0 ] && { echo "No encontré repos donde hayas trabajado."; exit 0; }
+
+ahora=$(date +%s); hallazgos=0; resumen=""
+for repo in "${repos[@]}"; do
+  linea=""
+  # ── Cambios sin commitear, y desde cuándo ──────────────────────────────────
+  sucio=$(git -C "$repo" status --porcelain 2>/dev/null)
+  if [ -n "$sucio" ]; then
+    # El archivo modificado más reciente marca "desde cuándo está a medio hacer".
+    ultimo=0
+    while IFS= read -r f; do
+      f=${f:3}; f=${f%% -> *}; f=${f//\"/}
+      [ -f "$repo/$f" ] || continue
+      t=$(stat -f %m "$repo/$f" 2>/dev/null || echo 0)
+      [ "$t" -gt "$ultimo" ] && ultimo=$t
+    done <<<"$sucio"
+    edad=$(( (ahora - ultimo) / 3600 ))
+    n=$(wc -l <<<"$sucio" | tr -d ' ')
+    if [ "$ultimo" -gt 0 ] && [ "$edad" -ge "$horas" ]; then
+      linea+="  $n archivos sin commitear, el último toque hace ${edad}h"$'\n'
+    fi
+  fi
+  # ── Commits que nunca salieron ─────────────────────────────────────────────
+  rama=$(git -C "$repo" branch --show-current 2>/dev/null)
+  if [ -n "$rama" ] && git -C "$repo" rev-parse --abbrev-ref "@{u}" >/dev/null 2>&1; then
+    sin_push=$(git -C "$repo" rev-list --count "@{u}..HEAD" 2>/dev/null)
+    [ "${sin_push:-0}" -gt 0 ] && linea+="  $sin_push commits en $rama sin pushear"$'\n'
+  fi
+  # ── Ramas viejas que nunca se mergearon ────────────────────────────────────
+  principal=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||')
+  principal=${principal:-main}
+  while IFS='|' read -r nombre fecha; do
+    [ -z "$nombre" ] && continue
+    [ "$nombre" = "$principal" ] && continue
+    dias=$(( (ahora - fecha) / 86400 ))
+    [ "$dias" -lt "$viejas" ] && continue
+    git -C "$repo" merge-base --is-ancestor "$nombre" "origin/$principal" 2>/dev/null && continue
+    # Con ${}: un « pegado a la variable se come el nombre en bash.
+    linea+="  rama ${nombre} sin mergear, última vez hace ${dias} días"$'\n'
+  done < <(git -C "$repo" for-each-ref --format='%(refname:short)|%(committerdate:unix)' refs/heads 2>/dev/null)
+  # ── Worktrees olvidados ────────────────────────────────────────────────────
+  wt=$(git -C "$repo" worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+  [ "${wt:-0}" -gt 0 ] && linea+="  $wt worktree(s) abiertos"$'\n'
+
+  if [ -n "$linea" ]; then
+    hallazgos=$((hallazgos + 1))
+    resumen+="$(basename "$repo"):"$'\n'"$linea"
+  fi
+done
+
+if [ "$hallazgos" = 0 ]; then
+  echo "Todo guardado: nada sin commitear, sin pushear ni ramas colgadas."
+  exit 0
+fi
+printf '%s' "$resumen"
+
+if [ "$avisar_flag" = 1 ]; then
+  # Una vez por día alcanza: esto no es una urgencia, es un recordatorio.
+  hoy=$(date +%F)
+  [ "$(cat "$est/vigia-visto" 2>/dev/null)" = "$hoy" ] && exit 0
+  echo "$hoy" > "$est/vigia-visto"
+  corto=$(printf '%s' "$resumen" | tr '\n' ' ' | cut -c1-180)
+  declare -f en_silencio >/dev/null && en_silencio && { printf '%s | (en silencio)\n' "$(date '+%d/%m %H:%M')" >> "$est/vigia.log" 2>/dev/null; exit 0; }
+  osascript -e "display notification \"${corto//\"/\'}\" with title \"Quedó trabajo a medio guardar\" sound name \"Tink\"" >/dev/null 2>&1 & disown
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: Trabajo sin guardar" -d "$corto" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
+  printf '%s | %s\n' "$(date '+%d/%m %H:%M')" "$corto" >> "$est/vigia.log"
+fi

@@ -13,6 +13,7 @@
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG=${LANG:-es_AR.UTF-8}
 [ -f ~/.config/claude-gadgets/config ] && . ~/.config/claude-gadgets/config
+[ -f $HOME/.claude/gadgets/bin/silencio.sh ] && . $HOME/.claude/gadgets/bin/silencio.sh   # horario de no molestar
 # CLAUDE_ESTADO permite apuntar a otra carpeta (sirve para probarlo sin que la
 # statusline pise el archivo de uso mientras tanto).
 est=${CLAUDE_ESTADO:-$HOME/.claude/estado}; uso="$est/uso.json"; visto="$est/limite-visto"
@@ -75,6 +76,7 @@ for u in $umbral; do
       [ -n "$fecha" ] && cuando=" Se renueva el $fecha."
     fi
     msg="Llevás ${pct}% del cupo semanal.${cuando} $consejo"
+  declare -f en_silencio >/dev/null && en_silencio && { printf '%s | (en silencio)\n' "$(date '+%d/%m %H:%M')" >> "$est/limite.log" 2>/dev/null; exit 0; }
     osascript -e "display notification \"${msg//\"/\'}\" with title \"Cupo de Claude al ${pct}%\" sound name \"Submarine\"" >/dev/null 2>&1 & disown
     [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: Cupo al ${pct}%" -d "$msg" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
     printf '%s | %s\n' "$(date '+%d/%m %H:%M')" "$msg" >> "$est/limite.log"

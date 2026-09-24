@@ -68,3 +68,17 @@
 # DIARIO_HORA=20
 # LIMPIAR_DIAS=90
 # BUSCAR_MODELO=sonnet
+
+# ── No molestar ──────────────────────────────────────────────────────────────
+# Los avisos se callan en esta franja; lo urgente (un servicio caído, algo que
+# te está bloqueando) suena igual.
+# SILENCIO_DESDE=23
+# SILENCIO_HASTA=8
+# SILENCIO_DIAS="sab dom"
+# SILENCIO=0        # lo apaga
+
+# ── Credenciales y trabajo a medio guardar ───────────────────────────────────
+# SECRETOS=0        # apaga el detector de credenciales
+# VIGIA_REPOS=("$HOME/proyectos/hub")   # si no, salen de tus sesiones
+# VIGIA_HORAS=4
+# VIGIA_RAMAS=14

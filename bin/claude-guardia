@@ -25,13 +25,19 @@ export LANG=${LANG:-es_AR.UTF-8}
 # sin tocar tu configuración ni tu estado reales (ver pruebas/).
 conf=${CLAUDE_GADGETS_CONF:-$HOME/.config/claude-gadgets/config}
 [ -f "$conf" ] && . "$conf"
+[ -f $HOME/.claude/gadgets/bin/silencio.sh ] && . $HOME/.claude/gadgets/bin/silencio.sh   # horario de no molestar
 est=${CLAUDE_ESTADO:-$HOME/.claude/estado}; mkdir -p "$est"
 estado="$est/guardia.json"; log="$est/guardia.log"
 plist=~/Library/LaunchAgents/com.claude-gadgets.guardia.plist
 espera=$((${GUARDIA_ESPERA:-15} * 60))
 [ -f "$estado" ] || echo '{}' > "$estado"
 
-avisar() {  # titulo, texto, sonido
+avisar() {  # titulo, texto, sonido[, "urgente"]
+  # En horario de silencio queda sólo en el log, salvo lo urgente.
+  if declare -f en_silencio >/dev/null && en_silencio "${4:-}"; then
+    printf '%s | (en silencio) %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"
+    return
+  fi
   local t=${1//\"/\'} m=${2//\"/\'}
   osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Glass}\"" >/dev/null 2>&1 &
   disown
@@ -119,7 +125,7 @@ for fila in "${GUARDIA[@]}"; do
     mal=$(gh run list -R "$(git -C "$repo" remote get-url origin | sed -E 's#.*github.com[:/]##; s/\.git$//')" \
             --commit "$sha" --limit 3 --json conclusion --jq '[.[] | select(.conclusion=="failure")] | length' 2>/dev/null)
     if [ "${mal:-0}" -gt 0 ]; then
-      avisar "❌ $nombre: falló el build" "$titulo" Basso; olvidar "$nombre"; guardar "$nombre" sha "$sha"; continue
+      avisar "❌ $nombre: falló el build" "$titulo" Basso urgente; olvidar "$nombre"; guardar "$nombre" sha "$sha"; continue
     fi
   fi
 
@@ -127,7 +133,7 @@ for fila in "${GUARDIA[@]}"; do
     if [ "$ahora_h" = 200 ] && [ $transcurrido -ge 1 ]; then
       avisar "✅ $nombre: en línea" "$titulo" Hero; guardar "$nombre" desde ""
     elif [ "$ahora_h" != 200 ] && [ $((ahora - desde)) -ge $espera ]; then
-      avisar "❌ $nombre: no responde ($ahora_h)" "Desde el deploy de: $titulo" Basso; guardar "$nombre" desde ""
+      avisar "❌ $nombre: no responde ($ahora_h)" "Desde el deploy de: $titulo" Basso urgente; guardar "$nombre" desde ""
     fi
   else
     if [ -n "$ahora_h" ] && [ "$ahora_h" != "$antes" ]; then

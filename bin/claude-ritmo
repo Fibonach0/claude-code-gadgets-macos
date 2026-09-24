@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Tu ritmo: cuánto sale por semana, qué días rendís y cuánto tardan los PRs.
+
+    claude-ritmo               las últimas 6 semanas
+    claude-ritmo --semanas 12
+    claude-ritmo --proyecto hub
+
+Los mismos datos de siempre (tus sesiones y tus PRs) mirados en el tiempo, para
+ver la tendencia en vez de la foto de hoy.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import prs  # noqa: E402
+import tx  # noqa: E402
+
+DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def hm(minutos: float) -> str:
+    h, m = divmod(int(round(minutos)), 60)
+    return "%dh %02dm" % (h, m) if h else "%dm" % m
+
+
+def barrita(valor: float, maximo: float, ancho: int = 22) -> str:
+    n = 0 if maximo <= 0 else int(round(valor / maximo * ancho))
+    return "▇" * n + "·" * (ancho - n)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--semanas", type=int, default=6)
+    ap.add_argument("--proyecto", default="")
+    a = ap.parse_args()
+    dias = a.semanas * 7
+    desde = (datetime.now().astimezone() - timedelta(days=dias)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+
+    # ── Tiempo por semana y por día de la semana ─────────────────────────────
+    semanas = defaultdict(lambda: {"min": 0.0, "pr": 0, "ses": 0})
+    por_dia_semana = defaultdict(float)
+    dias_con_trabajo = set()
+    for s in tx.sesiones(desde):
+        if a.proyecto and a.proyecto.lower() not in s["proyecto"].lower():
+            continue
+        f = datetime.fromisoformat(s["desde"])
+        clave = f.strftime("%G-S%V")
+        semanas[clave]["min"] += s["minutos"]
+        semanas[clave]["pr"] += s["prompts"]
+        semanas[clave]["ses"] += 1
+        por_dia_semana[f.weekday()] += s["minutos"]
+        if s["minutos"] > 5:
+            dias_con_trabajo.add(s["dia"])
+
+    if not semanas:
+        print("No hay sesiones en ese período.")
+        return
+
+    # ── PRs por semana y cuánto tardaron ─────────────────────────────────────
+    repos = prs.repos_desde_sesiones(desde)
+    if a.proyecto:
+        repos = {r: n for r, n in repos.items() if a.proyecto.lower() in n.lower()}
+    pr_semana = defaultdict(int)
+    abiertos = []
+    for p in prs.repartir(repos, dias):
+        f = datetime.fromisoformat(p["mergedAt"].replace("Z", "+00:00")).astimezone()
+        pr_semana[f.strftime("%G-S%V")] += 1
+        abiertos.append(p["horas_abierto"])
+
+    tope = max(s["min"] for s in semanas.values())
+    print("SEMANA      TIEMPO        PEDIDOS  PRs")
+    for clave in sorted(semanas):
+        s = semanas[clave]
+        print("%-11s %-9s %s %5d %4d"
+              % (clave.replace("-S", " sem "), hm(s["min"]),
+                 barrita(s["min"], tope), s["pr"], pr_semana.get(clave, 0)))
+
+    print("\nPOR DÍA DE LA SEMANA")
+    tope_d = max(por_dia_semana.values()) if por_dia_semana else 1
+    for i, nombre in enumerate(DIAS):
+        m = por_dia_semana.get(i, 0.0)
+        print("%-11s %-9s %s" % (nombre, hm(m), barrita(m, tope_d)))
+
+    total = sum(s["min"] for s in semanas.values())
+    n_sem = len(semanas)
+    print("\nEN PROMEDIO")
+    print("  %s por semana · %s por día trabajado · %d días activos de %d"
+          % (hm(total / n_sem), hm(total / max(len(dias_con_trabajo), 1)),
+             len(dias_con_trabajo), dias))
+    if pr_semana:
+        print("  %.1f PRs por semana" % (sum(pr_semana.values()) / n_sem))
+    if abiertos:
+        abiertos.sort()
+        medio = abiertos[len(abiertos) // 2]
+        def dur(h):   # muchos PRs viven minutos: "0.0 horas" no dice nada
+            return "%.0f min" % (h * 60) if h < 1 else "%.1f h" % h
+        print("  un PR vive %s abierto (mediana), el más largo %s"
+              % (dur(medio), dur(abiertos[-1])))
+
+
+if __name__ == "__main__":
+    main()

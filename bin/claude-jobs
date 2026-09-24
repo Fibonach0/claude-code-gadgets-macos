@@ -18,6 +18,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG=${LANG:-es_AR.UTF-8}
 conf=~/.config/claude-gadgets/config
 [ -f "$conf" ] && . "$conf"
+[ -f $HOME/.claude/gadgets/bin/silencio.sh ] && . $HOME/.claude/gadgets/bin/silencio.sh   # horario de no molestar
 # OJO: acá NO se usa el token de `claude setup-token`. Con ese login los
 # conectores de claude.ai (Railway, Gmail…) no están disponibles; con la sesión
 # normal de la Mac sí. Por eso este gadget corre local (launchd), no por SSH.
@@ -26,6 +27,8 @@ log="$est/jobs.log"; salida="$est/jobs.json"
 plist=~/Library/LaunchAgents/com.claude-gadgets.jobs.plist
 
 avisar() { local t=${1//\"/\'} m=${2//\"/\'}
+  if declare -f en_silencio >/dev/null && en_silencio "${4:-}"; then
+    printf '%s | (en silencio) %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"; return; fi
   osascript -e "display notification \"$m\" with title \"$t\" sound name \"${3:-Basso}\"" >/dev/null 2>&1 & disown
   [ -n "$NTFY_TOPIC" ] && curl -s -m 5 -H "Title: $1" -d "$2" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null &
   printf '%s | %s: %s\n' "$(date '+%d/%m %H:%M')" "$1" "$2" >> "$log"; }

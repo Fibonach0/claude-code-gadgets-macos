@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""¿En qué estaba? Tus últimas sesiones, con su tema, para volver a una.
+
+    claude-retomar                 las últimas 12, y elegís cuál
+    claude-retomar --proyecto hub  sólo las de ese proyecto
+    claude-retomar --lista         sólo mostrar, sin preguntar
+    claude-retomar 3               retomar directamente la número 3
+
+Al elegir, abre esa sesión con `claude --resume` en la carpeta donde ocurrió,
+así volvés con todo el contexto en vez de volver a explicarlo.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import pathlib
+import subprocess
+import sys
+from datetime import datetime, timedelta
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import tx  # noqa: E402
+
+
+def hace(desde: str) -> str:
+    d = datetime.now().astimezone() - datetime.fromisoformat(desde)
+    if d < timedelta(hours=1):
+        return "hace %d min" % (d.seconds // 60)
+    if d < timedelta(days=1):
+        return "hace %d h" % (d.seconds // 3600)
+    return "hace %d días" % d.days
+
+
+def limpiar(tema: str) -> str:
+    """El primer mensaje sirve como título, salvo cuando es ruido del sistema."""
+    t = (tema or "").strip()
+    for basura in ("<local-command-caveat>", "<command-name>", "Caveat:"):
+        if t.startswith(basura):
+            return "(arrancó con un comando)"
+    return t or "(sin texto)"
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("numero", nargs="?", type=int)
+    ap.add_argument("--proyecto", default="")
+    ap.add_argument("--cuantas", type=int, default=12)
+    ap.add_argument("--lista", action="store_true")
+    a = ap.parse_args()
+
+    desde = (datetime.now().astimezone() - timedelta(days=30))
+    todas = [s for s in tx.sesiones(desde) if s["minutos"] >= 1]
+    if a.proyecto:
+        todas = [s for s in todas if a.proyecto.lower() in s["proyecto"].lower()]
+    todas.sort(key=lambda s: s["hasta"], reverse=True)
+    todas = todas[:a.cuantas]
+    if not todas:
+        print("No encontré sesiones recientes.")
+        return
+
+    for i, s in enumerate(todas, 1):
+        print("%2d. %-26s %-13s %5s  %s"
+              % (i, s["proyecto"][:26], hace(s["hasta"]),
+                 "%dm" % round(s["minutos"]), limpiar(s["tema"])[:60]))
+
+    if a.lista:
+        return
+
+    elegido = a.numero
+    if elegido is None:
+        try:
+            r = input("\n¿Cuál retomo? (Enter para salir) ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not r:
+            return
+        if not r.isdigit():
+            print("Decime un número de la lista.")
+            return
+        elegido = int(r)
+
+    if not 1 <= elegido <= len(todas):
+        print("No existe esa opción.")
+        return
+    s = todas[elegido - 1]
+    carpeta = s["cwd"] if s["cwd"] and os.path.isdir(s["cwd"]) else str(pathlib.Path.home())
+    print("\nRetomando %s en %s…" % (s["proyecto"], carpeta))
+    os.chdir(carpeta)
+    # Se reemplaza el proceso: la sesión queda en tu terminal, no dentro de esto.
+    os.execvp("claude", ["claude", "--resume", s["sesion"]])
+
+
+if __name__ == "__main__":
+    main()
